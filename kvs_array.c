@@ -119,6 +119,8 @@ int kvs_array_del(kvs_array_t *inst, char *key) {
 			kvs_free(inst->table[i].value);
 			inst->table[i].value = NULL;
 
+			inst->idx = i;
+
 			return 0;
 		}
 	}
@@ -166,6 +168,8 @@ int kvs_array_mod(kvs_array_t *inst, char *key, char *value) {
  * @return 0: exist, 1: no exist
  */
 int kvs_array_exist(kvs_array_t *inst, char *key) {
+
+	if (!inst || !key) return -1;
 	
 	char *str = kvs_array_get(inst, key);
 	if (!str) {
