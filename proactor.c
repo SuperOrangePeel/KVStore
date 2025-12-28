@@ -12,6 +12,8 @@
 #define EVENT_READ		1
 #define EVENT_WRITE		2
 
+#define KVS_CONNS_INST(fd) (fd - 3)
+
 extern int kvs_protocol(char *msg, int length, char *response);
 
 
@@ -95,8 +97,30 @@ int set_event_accept(struct io_uring *ring, int sockfd, struct sockaddr *addr,
 }
 
 
-typedef int (*msg_handler)(char *msg, int length, char *response);
+typedef int (*msg_handler)(char *msg, int length, char *response, int* length_r);
 static msg_handler kvs_handler;
+
+#define CONNECT_NUM_MAX 5
+
+typedef struct kvs_conn_s {
+	int fd;
+	char r_buffer[BUFFER_LENGTH];
+	// int r_idx;
+	int r_total;
+	char response[BUFFER_LENGTH];
+} kvs_conn_t;
+
+kvs_conn_t kvs_conns[CONNECT_NUM_MAX];
+
+void kvs_init_conn(int connfd) {
+	kvs_conns[KVS_CONNS_INST(connfd)].fd = connfd;
+	char *r_buffer = kvs_conns[KVS_CONNS_INST(connfd)].r_buffer;
+	char *w_buffer = kvs_conns[KVS_CONNS_INST(connfd)].response;
+	memset(r_buffer, 0, BUFFER_LENGTH);
+	memset(w_buffer, 0, BUFFER_LENGTH);
+	//kvs_conns[KVS_CONNS_INST(connfd)].r_idx = 0;
+	kvs_conns[KVS_CONNS_INST(connfd)].r_total = 0;
+}
 
 
 
@@ -121,12 +145,13 @@ int proactor_start(unsigned short port, msg_handler handler) {
 
 	struct sockaddr_in clientaddr;	
 	socklen_t len = sizeof(clientaddr);
+	
 	set_event_accept(&ring, sockfd, (struct sockaddr*)&clientaddr, &len, 0);
 	
 #endif
 
-	char buffer[BUFFER_LENGTH] = {0};
-	char response[BUFFER_LENGTH] = {0};
+	//char buffer[BUFFER_LENGTH] = {0};
+	//char response[BUFFER_LENGTH] = {0};
 
 
 	while (1) {
@@ -153,29 +178,56 @@ int proactor_start(unsigned short port, msg_handler handler) {
 				//printf("set_event_accept\n"); //
 
 				int connfd = entries->res;
-
-				set_event_recv(&ring, connfd, buffer, BUFFER_LENGTH, 0);
+				
+				kvs_init_conn(connfd);
+				
+				char* r_buffer = kvs_conns[KVS_CONNS_INST(connfd)].r_buffer;
+				set_event_recv(&ring, connfd, r_buffer, BUFFER_LENGTH, 0);
 
 				
 			} else if (result.event == EVENT_READ) {  //
 
-				int ret = entries->res;
-
-				if (ret == 0) {
+				int r_size = entries->res;
+				if (r_size == 0) {
 					close(result.fd);
-				} else if (ret > 0) {
-					
+				} else if (r_size > 0) {
+					int* r_buffer_len = &kvs_conns[KVS_CONNS_INST(result.fd)].r_total;
+					char* r_buffer = kvs_conns[KVS_CONNS_INST(result.fd)].r_buffer;
+					char* w_buffer = kvs_conns[KVS_CONNS_INST(result.fd)].response;
+					*r_buffer_len += r_size;
 					//int kvs_protocol(char *msg, int length, char *response);
-					ret = kvs_handler(buffer, ret, response);
+
+					int length_resp = 0;
+					// process the received data
+					int length_processed = kvs_handler(r_buffer, *r_buffer_len, w_buffer, &length_resp);
+					// move the unprocessed data to the beginning of the read buffer
 					
-					set_event_send(&ring, result.fd, response, ret, 0);
+					if(length_processed > *r_buffer_len) {
+						//error
+						printf("%s:%d error\n", __FILE__, __LINE__);
+					} else if(length_processed == *r_buffer_len) {
+						*r_buffer_len = 0;
+					} else {
+						*r_buffer_len -= length_processed;
+						//fwrite(node->val, 1, node->len_val, stdout);
+						//fflush(stdout);
+						printf("unprocessed data: [%.*s]\n", *r_buffer_len, r_buffer + length_processed);
+						memmove(r_buffer, r_buffer + length_processed, *r_buffer_len);
+					}
+
+					set_event_send(&ring, result.fd, w_buffer, length_resp, 0);
+				} else {
+					// error
 				}
-			}  else if (result.event == EVENT_WRITE) {  //
+			}  else if (result.event == EVENT_WRITE) {
+  //
 
 				int ret = entries->res;
-				//printf("set_event_send ret: %d, %s\n", ret, buffer);
 
-				set_event_recv(&ring, result.fd, buffer, BUFFER_LENGTH, 0);
+				//printf("set_event_send ret: %d, %s\n", ret, buffer);
+				char* r_buffer = kvs_conns[KVS_CONNS_INST(result.fd)].r_buffer;
+				int buffer_len = kvs_conns[KVS_CONNS_INST(result.fd)].r_total;
+				set_event_recv(&ring, result.fd, r_buffer + buffer_len, BUFFER_LENGTH, 0);
 				
 			}
 			

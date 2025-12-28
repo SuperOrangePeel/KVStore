@@ -27,13 +27,13 @@
 
 #if ENABLE_KVSTORE
 
-typedef int (*msg_handler)(char *msg, int length, char *response);
+typedef int (*msg_handler)(char *msg, int length, char *response, int* length_r);
 
 static msg_handler kvs_handler;
 
 int kvs_request(struct conn *c) {
 
-	c->wlength = kvs_handler(c->rbuffer, c->rlength, c->wbuffer);
+	int length_processed = kvs_handler(c->rbuffer, c->rlength, c->wbuffer, &c->wlength);
 
 }
 

@@ -186,4 +186,141 @@ int kvs_array_exist(kvs_array_t *inst, char *key) {
 	return 0;
 }
 
+/*
+ *@return >=0 success -1 error -2 exist;
+ */
+int kvs_array_resp_set(kvs_array_t *inst, char *key, int len_key, char *value, int len_val) {
+	if (inst == NULL || key == NULL || len_key <= 0|| value == NULL || len_val <= 0) return -1;
+	if (inst->total == KVS_ARRAY_SIZE) return -1;
+
+	printf("kvs_array_resp_exist before\n");
+	int exist = kvs_array_resp_exist(inst, key, len_key);
+	if (exist >= 0) {
+		return -2;
+	}
+	printf("kvs_array_resp_exist after\n");
+	char *kcopy = kvs_malloc(len_key);
+	if (kcopy == NULL) return -1;
+	memset(kcopy, 0, len_key);
+	memcpy(kcopy, key, len_key);
+
+	char *kvalue = kvs_malloc(len_val);
+	if (kvalue == NULL) return -1;
+	memset(kvalue, 0, len_val);
+	memcpy(kvalue, value, len_val);
+
+	int i = 0;
+	for (i = 0;i < inst->total;i ++) {
+		if (inst->table[i].key == NULL) {
+			
+			inst->table[i].key = kcopy;
+			inst->table[i].len_key = len_key;
+			inst->table[i].value = kvalue;
+			inst->table[i].len_val = len_val;
+			inst->total ++;
+			
+			return i;
+		}
+	}
+
+	if (i == inst->total && i < KVS_ARRAY_SIZE) {
+
+		inst->table[i].key = kcopy;
+		inst->table[i].len_key = len_key;
+		inst->table[i].value = kvalue;
+		inst->table[i].len_val = len_val;
+		inst->total ++;
+		
+	}
+	printf("insert success: value:[%.*s] (len_val:%d)\n", len_val, value, len_val);
+
+	return i;
+}
+
+/*
+ *@return >=0 success -1 error -2 not exist
+ */
+int kvs_array_resp_get(kvs_array_t *inst, char *key, int len_key, char **value, int *len_val) {
+
+	if (inst == NULL || key == NULL || len_key <= 0 || value == NULL || len_val == NULL) return -1;
+
+	int i = 0;
+	for (i = 0;i < inst->total;i ++) {
+		if (inst->table[i].key == NULL || inst->table[i].len_key != len_key) {
+			continue;
+		} 
+		
+		if(memcmp(inst->table[i].key, key, len_key) == 0) {
+			*value = inst->table[i].value;
+			*len_val = inst->table[i].len_val;
+			return i;
+		}
+	}
+
+	return -2;
+}
+
+
+/*
+ * @return -1 error; >=0 success;  -2 no exist
+ */
+int kvs_array_resp_del(kvs_array_t *inst, char *key, int len_key) {
+
+	if (inst == NULL || key == NULL || len_key <= 0) return -1;
+
+	int idx = kvs_array_resp_exist(inst, key, len_key);
+	if(idx < 0) {
+		return idx;
+	} else {
+		kvs_free(inst->table[idx].key);
+		inst->table[idx].key = NULL;
+		inst->table[idx].len_key = 0;
+
+		kvs_free(inst->table[idx].value);
+		inst->table[idx].value = NULL;
+		inst->table[idx].len_val = 0;
+
+		if (inst->total-1 == idx) {
+			inst->total --;
+		}
+	}
+
+	return idx;
+}
+
+/*
+ * @return >=0 success -1 error -2 not exist
+ */
+int kvs_array_resp_mod(kvs_array_t *inst, char *key, int len_key, char *value, int len_val) {
+	if (inst == NULL || key == NULL || len_key <= 0|| value == NULL || len_val <= 0) return -1;
+	int idx = kvs_array_resp_exist(inst, key, len_key);
+	if(idx < 0) {
+		return idx;
+	} else {
+		kvs_free(inst->table[idx].value);
+		inst->table[idx].value = kvs_malloc(len_val);
+		memset(inst->table[idx].value, 0, len_val);
+		memcpy(inst->table[idx].value, value, len_val);
+		inst->table[idx].len_val = len_val;
+	}
+	return idx;
+}
+
+/*
+ * @return >=0 exist -1 error -2 not exist
+ */
+int kvs_array_resp_exist(kvs_array_t *inst, char* key, int len_key) {
+	if(inst == NULL || key == NULL || len_key <= 0) return -1;
+	int i = 0;
+	for (i = 0;i < inst->total;i ++) {
+		if (inst->table[i].key == NULL || inst->table[i].len_key != len_key) {
+			continue;
+		} 
+		
+		if(memcmp(inst->table[i].key, key, len_key) == 0) {
+			return i;
+		}
+	}
+	return -2;
+}
 

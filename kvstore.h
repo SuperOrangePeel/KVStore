@@ -18,7 +18,10 @@
 
 #define NETWORK_SELECT		NETWORK_PROACTOR
 
-
+// protocol
+#define KVS_1R1R 	0// one request one response 
+#define KVS_RESP	1
+#define KVS_PROTOCOL_SELECT KVS_RESP
 
 #define KVS_MAX_TOKENS		128
 
@@ -27,13 +30,27 @@
 #define ENABLE_HASH			1
 
 
-typedef int (*msg_handler)(char *msg, int length, char *response);
+typedef int (*msg_handler)(char *msg, int length, char *response, int* length_r);
 
 
 extern int reactor_start(unsigned short port, msg_handler handler);
 extern int proactor_start(unsigned short port, msg_handler handler);
 extern int ntyco_start(unsigned short port, msg_handler handler);
 
+#if (KVS_PROTOCOL_SELECT == KVS_RESP)
+
+#define KVS_RESP_CMD_MAX 1024
+
+typedef struct kvs_resp_cmd_s {
+	char* cmd;
+	int len_cmd;
+	char* key;
+	int len_key;
+	char* val;
+	int len_val;
+}kvs_resp_cmd_t;
+
+#endif
 
 
 #if ENABLE_ARRAY
@@ -41,6 +58,10 @@ extern int ntyco_start(unsigned short port, msg_handler handler);
 typedef struct kvs_array_item_s {
 	char *key;
 	char *value;
+#if (KVS_PROTOCOL_SELECT == KVS_RESP)
+	int len_key;
+	int len_val;
+#endif 
 } kvs_array_item_t;
 
 #define KVS_ARRAY_SIZE		1024
@@ -59,8 +80,11 @@ char* kvs_array_get(kvs_array_t *inst, char *key);
 int kvs_array_del(kvs_array_t *inst, char *key);
 int kvs_array_mod(kvs_array_t *inst, char *key, char *value);
 int kvs_array_exist(kvs_array_t *inst, char *key);
-
-
+int kvs_array_resp_set(kvs_array_t *inst, char *key, int len_key, char *value, int len_val);
+int kvs_array_resp_get(kvs_array_t *inst, char *key, int len_key, char **value, int *len_val);
+int kvs_array_resp_del(kvs_array_t *inst, char *key, int len_key);
+int kvs_array_resp_mod(kvs_array_t *inst, char *key, int len_key, char *value, int len_val);
+int kvs_array_resp_exist(kvs_array_t *inst, char* key, int len_key);
 #endif
 
 
@@ -84,6 +108,10 @@ typedef struct _rbtree_node {
 	struct _rbtree_node *parent;
 	KEY_TYPE key;
 	void *value;
+#if (KVS_PROTOCOL_SELECT == KVS_RESP)
+	int len_key;
+	int len_val;
+#endif 
 } rbtree_node;
 
 typedef struct _rbtree {
