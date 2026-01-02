@@ -10,6 +10,10 @@
 typedef struct Node {
     int key;
     int value;
+#if(KVS_PROTOCOL_SELECT == KVS_RESP)
+    int len_key;
+    int len_val;
+#endif
     struct Node** forward;
 } Node;
 

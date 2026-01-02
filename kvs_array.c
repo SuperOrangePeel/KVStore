@@ -193,12 +193,12 @@ int kvs_array_resp_set(kvs_array_t *inst, char *key, int len_key, char *value, i
 	if (inst == NULL || key == NULL || len_key <= 0|| value == NULL || len_val <= 0) return -1;
 	if (inst->total == KVS_ARRAY_SIZE) return -1;
 
-	printf("kvs_array_resp_exist before\n");
+	//printf("kvs_array_resp_exist before\n");
 	int exist = kvs_array_resp_exist(inst, key, len_key);
 	if (exist >= 0) {
 		return -2;
 	}
-	printf("kvs_array_resp_exist after\n");
+	//printf("kvs_array_resp_exist after\n");
 	char *kcopy = kvs_malloc(len_key);
 	if (kcopy == NULL) return -1;
 	memset(kcopy, 0, len_key);
@@ -232,7 +232,7 @@ int kvs_array_resp_set(kvs_array_t *inst, char *key, int len_key, char *value, i
 		inst->total ++;
 		
 	}
-	printf("insert success: value:[%.*s] (len_val:%d)\n", len_val, value, len_val);
+	//printf("insert success: value:[%.*s] (len_val:%d)\n", len_val, value, len_val);
 
 	return i;
 }

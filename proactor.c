@@ -46,7 +46,7 @@ int p_init_server(unsigned short port) {
 
 
 #define ENTRIES_LENGTH		1024
-#define BUFFER_LENGTH		1024
+#define BUFFER_LENGTH		1048576 // 1024 * 1024
 
 int set_event_recv(struct io_uring *ring, int sockfd,
 				      void *buf, size_t len, int flags) {
@@ -226,8 +226,8 @@ int proactor_start(unsigned short port, msg_handler handler) {
 
 				//printf("set_event_send ret: %d, %s\n", ret, buffer);
 				char* r_buffer = kvs_conns[KVS_CONNS_INST(result.fd)].r_buffer;
-				int buffer_len = kvs_conns[KVS_CONNS_INST(result.fd)].r_total;
-				set_event_recv(&ring, result.fd, r_buffer + buffer_len, BUFFER_LENGTH, 0);
+				int current_len = kvs_conns[KVS_CONNS_INST(result.fd)].r_total;
+				set_event_recv(&ring, result.fd, r_buffer + current_len, BUFFER_LENGTH - current_len, 0);
 				
 			}
 			

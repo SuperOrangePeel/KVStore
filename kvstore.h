@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <stddef.h>
+#include <sys/time.h>
 
 
 #define NETWORK_REACTOR 	0
@@ -21,13 +22,15 @@
 // protocol
 #define KVS_1R1R 	0// one request one response 
 #define KVS_RESP	1
-#define KVS_PROTOCOL_SELECT KVS_RESP
+#define KVS_PROTOCOL_SELECT KVS_1R1R
 
 #define KVS_MAX_TOKENS		128
 
 #define ENABLE_ARRAY		1
 #define ENABLE_RBTREE		1
 #define ENABLE_HASH			1
+
+#define TIME_SUB_MS(tv1, tv2)  ((tv1.tv_sec - tv2.tv_sec) * 1000 + (tv1.tv_usec - tv2.tv_usec) / 1000)
 
 
 typedef int (*msg_handler)(char *msg, int length, char *response, int* length_r);
@@ -39,16 +42,20 @@ extern int ntyco_start(unsigned short port, msg_handler handler);
 
 #if (KVS_PROTOCOL_SELECT == KVS_RESP)
 
-#define KVS_RESP_CMD_MAX 1024
+#define KVS_RESP_CMD_MAX 1048576 // 1024 * 1024 = 16MB
 
 typedef struct kvs_resp_cmd_s {
+	int cmd_type;
+	char *raw_ptr;
+	int raw_len;
+	
 	char* cmd;
 	int len_cmd;
 	char* key;
 	int len_key;
 	char* val;
 	int len_val;
-}kvs_resp_cmd_t;
+} kvs_resp_cmd_t;
 
 #endif
 
@@ -64,7 +71,7 @@ typedef struct kvs_array_item_s {
 #endif 
 } kvs_array_item_t;
 
-#define KVS_ARRAY_SIZE		1024
+#define KVS_ARRAY_SIZE		1024*1024
 
 typedef struct kvs_array_s {
 	kvs_array_item_t *table;
@@ -181,9 +188,29 @@ int kvs_hash_exist(kvs_hash_t *hash, char *key);
 #endif
 
 
+#define AOF_FSYNC_INTERVAL_MS 1000 // 1 second
+#define AOF_MAX_BUFFER_SIZE 4096 // 1KB
+
+
 void *kvs_malloc(size_t size);
 void kvs_free(void *ptr);
 
+typedef struct kvs_aof_context_s {
+    int aof_fd;
+    char *aof_filename;
+    struct timeval last_fsync_time;
+    char write_buffer[AOF_MAX_BUFFER_SIZE];
+	size_t write_offset;
+    size_t buffer_size;
+} kvs_aof_context_t;
+
+
+typedef int (*kvs_pest_get_exe_one_cmd)(char* msg, int length, int *idx);
+
+int kvs_persistence_init(kvs_aof_context_t *ctx, char* aof_filename);
+int kvs_persistence_close(kvs_aof_context_t *ctx);
+int kvs_persistence_write_aof(kvs_aof_context_t *ctx, char* data, size_t data_len);
+int kvs_persistence_load_aof(char *aof_nam, kvs_pest_get_exe_one_cmd func);
 
 
 
