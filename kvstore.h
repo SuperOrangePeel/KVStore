@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include <sys/time.h>
 
+#define KVS_PERSISTENCE 1
+
 
 #define NETWORK_REACTOR 	0
 #define NETWORK_PROACTOR	1
@@ -22,7 +24,7 @@
 // protocol
 #define KVS_1R1R 	0// one request one response 
 #define KVS_RESP	1
-#define KVS_PROTOCOL_SELECT KVS_1R1R
+#define KVS_PROTOCOL_SELECT KVS_RESP
 
 #define KVS_MAX_TOKENS		128
 
@@ -33,7 +35,7 @@
 #define TIME_SUB_MS(tv1, tv2)  ((tv1.tv_sec - tv2.tv_sec) * 1000 + (tv1.tv_usec - tv2.tv_usec) / 1000)
 
 
-typedef int (*msg_handler)(char *msg, int length, char *response, int* length_r);
+typedef int (*msg_handler)(char *msg, int length, char *response, int rsp_buf_len, int* length_r);
 
 
 extern int reactor_start(unsigned short port, msg_handler handler);
@@ -65,13 +67,13 @@ typedef struct kvs_resp_cmd_s {
 typedef struct kvs_array_item_s {
 	char *key;
 	char *value;
-#if (KVS_PROTOCOL_SELECT == KVS_RESP)
+//#if (KVS_PROTOCOL_SELECT == KVS_RESP)
 	int len_key;
 	int len_val;
-#endif 
+//#endif 
 } kvs_array_item_t;
 
-#define KVS_ARRAY_SIZE		1024*1024
+#define KVS_ARRAY_SIZE		1024
 
 typedef struct kvs_array_s {
 	kvs_array_item_t *table;
@@ -80,7 +82,7 @@ typedef struct kvs_array_s {
 } kvs_array_t;
 
 int kvs_array_create(kvs_array_t *inst);
-void kvs_array_destory(kvs_array_t *inst);
+void kvs_array_destroy(kvs_array_t *inst);
 
 int kvs_array_set(kvs_array_t *inst, char *key, char *value);
 char* kvs_array_get(kvs_array_t *inst, char *key);
@@ -130,7 +132,7 @@ typedef struct _rbtree {
 typedef struct _rbtree kvs_rbtree_t;
 
 int kvs_rbtree_create(kvs_rbtree_t *inst);
-void kvs_rbtree_destory(kvs_rbtree_t *inst);
+void kvs_rbtree_destroy(kvs_rbtree_t *inst);
 int kvs_rbtree_set(kvs_rbtree_t *inst, char *key, char *value);
 char* kvs_rbtree_get(kvs_rbtree_t *inst, char *key);
 int kvs_rbtree_del(kvs_rbtree_t *inst, char *key);
@@ -146,7 +148,7 @@ int kvs_rbtree_exist(kvs_rbtree_t *inst, char *key);
 
 #define MAX_KEY_LEN	128
 #define MAX_VALUE_LEN	512
-#define MAX_TABLE_SIZE	1024
+#define MAX_TABLE_SIZE	1048576 // 1024 * 1024
 
 #define ENABLE_KEY_POINTER	1
 
@@ -155,6 +157,8 @@ typedef struct hashnode_s {
 #if ENABLE_KEY_POINTER
 	char *key;
 	char *value;
+	int len_key;
+	int len_val;
 #else
 	char key[MAX_KEY_LEN];
 	char value[MAX_VALUE_LEN];
@@ -177,12 +181,19 @@ typedef struct hashtable_s kvs_hash_t;
 
 
 int kvs_hash_create(kvs_hash_t *hash);
-void kvs_hash_destory(kvs_hash_t *hash);
+void kvs_hash_destroy(kvs_hash_t *hash);
 int kvs_hash_set(hashtable_t *hash, char *key, char *value);
 char * kvs_hash_get(kvs_hash_t *hash, char *key);
 int kvs_hash_mod(kvs_hash_t *hash, char *key, char *value);
 int kvs_hash_del(kvs_hash_t *hash, char *key);
 int kvs_hash_exist(kvs_hash_t *hash, char *key);
+
+int kvs_hash_resp_set(kvs_hash_t *hash, char *key, int len_key, char *value, int len_val);
+int kvs_hash_resp_get(kvs_hash_t *hash, char *key, int len_key, char **value, int *len_val);
+int kvs_hash_resp_del(kvs_hash_t *hash, char *key, int len_key);
+int kvs_hash_resp_mod(kvs_hash_t *hash, char *key, int len_key, char *value, int len_val);
+int kvs_hash_resp_exist(kvs_hash_t *hash, char* key, int len_key);
+
 
 
 #endif

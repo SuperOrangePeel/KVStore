@@ -36,6 +36,40 @@ static int _hash(char *key, int size) {
 
 }
 
+// static int _hash_resp(char *key, int len_key, int size) {
+
+// 	if (!key) return -1;
+
+// 	int sum = 0;
+// 	int i = 0;
+
+// 	while(i < len_key) {
+// 		sum += key[i];
+// 		i ++;
+// 	}
+
+// 	return sum % size;
+
+// }
+
+// DJB2 hash function 
+static unsigned int _hash_resp(char *key, int len_key, int size) {
+    if (!key) return 0;
+
+    unsigned int hash = 5381; // 这是一个著名的初始魔数
+    int i = 0;
+
+    while (i < len_key) {
+        // hash * 33 + key[i]
+        // 使用位移 (hash << 5) + hash 代替乘法，速度极快
+        hash = ((hash << 5) + hash) + key[i];
+        i++;
+    }
+
+    // 优化点：如果 size 是 2 的幂，用 & (size - 1) 代替 % size
+    return hash % size; 
+}
+
 hashnode_t *_create_node(char *key, char *value) {
 
 	hashnode_t *node = (hashnode_t*)kvs_malloc(sizeof(hashnode_t));
@@ -51,7 +85,7 @@ hashnode_t *_create_node(char *key, char *value) {
 
 	char *kvalue = kvs_malloc(strlen(value) + 1);
 	if (kvalue == NULL) { 
-		kvs_free(kvalue);
+		kvs_free(kcopy);
 		return NULL;
 	}
 	memset(kvalue, 0, strlen(value) + 1);
@@ -68,6 +102,34 @@ hashnode_t *_create_node(char *key, char *value) {
 	return node;
 }
 
+hashnode_t *_create_node_resp(char *key, int len_key, char *value, int len_val) {
+
+	hashnode_t *node = (hashnode_t*)kvs_malloc(sizeof(hashnode_t));
+	if (!node) return NULL;
+	
+	char *kcopy = kvs_malloc(len_key);
+	if (kcopy == NULL) return NULL;
+	memset(kcopy, 0, len_key);
+	memcpy(kcopy, key, len_key);
+
+	node->key = kcopy;
+	node->len_key = len_key;
+
+	char *kvalue = kvs_malloc(len_val);
+	if (kvalue == NULL) { 
+		kvs_free(kcopy);
+		return NULL;
+	}
+	memset(kvalue, 0, len_val);
+	memcpy(kvalue, value, len_val);
+
+	node->value = kvalue;
+	node->len_val = len_val;
+
+	node->next = NULL;
+
+	return node;
+}
 
 //
 int kvs_hash_create(kvs_hash_t *hash) {
@@ -84,7 +146,7 @@ int kvs_hash_create(kvs_hash_t *hash) {
 }
 
 // 
-void kvs_hash_destory(kvs_hash_t *hash) {
+void kvs_hash_destroy(kvs_hash_t *hash) {
 
 	if (!hash) return;
 
@@ -249,6 +311,177 @@ int kvs_hash_exist(kvs_hash_t *hash, char *key) {
 	
 }
 
+/*
+ *@return >=0 success -1 error -2 exist
+ */
+int kvs_hash_resp_set(kvs_hash_t *hash, char *key, int len_key, char *value, int len_val) {
+
+	if (!hash || !key || !value || len_key <=0 || len_val <=0) return -1;
+
+	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+	hashnode_t *node = hash->nodes[idx];
+	while(node != NULL) {
+		if (node->len_key == len_key && memcmp(node->key, key, len_key) == 0) {
+			return -2;
+		}
+		node = node->next;
+	}
+
+	hashnode_t *new_node = _create_node_resp(key, len_key, value, len_val);
+	new_node->next = hash->nodes[idx];
+	hash->nodes[idx] = new_node;
+
+	hash->count ++;
+
+	return 0;
+	
+}
+
+/*
+ *@return >=0 success -1 error -2 not exist
+ */
+int kvs_hash_resp_get(kvs_hash_t *hash, char *key, int len_key, char **value, int *len_val) {
+
+	if (!hash || !key || len_key <=0 || !value || !len_val) return -1;
+
+	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+
+	hashnode_t *node = hash->nodes[idx];
+
+	while (node != NULL) {
+
+		if (node->len_key == len_key && memcmp(node->key, key, len_key) == 0) {
+			*value = node->value;
+			*len_val = node->len_val;
+			return 0;
+		}
+
+		node = node->next;
+	}
+
+	return -2;
+}
+
+/*
+ * @return -1 error; 0 success;  -2 not exist
+ */
+int kvs_hash_resp_del(kvs_hash_t *hash, char *key, int len_key) {
+	if (!hash || !key || len_key <=0) return -1;
+
+	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+
+	hashnode_t *head = hash->nodes[idx];
+	if (head == NULL) return -2; // not exist
+	// head node
+	if (head->len_key == len_key && memcmp(head->key, key, len_key) == 0) {
+		hashnode_t *tmp = head->next;
+		hash->nodes[idx] = tmp;
+
+		kvs_free(head->key);
+		kvs_free(head->value);
+		
+		kvs_free(head);
+		hash->count --;
+		return 0;
+	}
+
+	hashnode_t *cur = head;
+	while (cur->next != NULL) {
+		if (cur->next->len_key == len_key && memcmp(cur->next->key, key, len_key) == 0) break; // search node
+
+		cur = cur->next;
+	}
+
+	if (cur->next == NULL) return -2;
+
+	hashnode_t *tmp = cur->next;
+	cur->next = tmp->next;
+	
+	kvs_free(tmp->key);
+	kvs_free(tmp->value);
+	kvs_free(tmp);
+	hash->count --;
+	return 0;
+}
+
+/*
+ * @return >=0 success -1 error -2 not exist
+ */
+int kvs_hash_resp_mod(kvs_hash_t *hash, char *key, int len_key, char *value, int len_val) {
+
+	if (!hash || !key || len_key <=0 || !value || len_val <=0) return -1;
+
+	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+
+	hashnode_t *node = hash->nodes[idx];
+
+	while (node != NULL) {
+
+		if (node->len_key == len_key && memcmp(node->key, key, len_key) == 0) {
+			break;
+		}
+
+		node = node->next;
+	}
+
+	if (node == NULL) {
+		return -2;
+	}
+
+	// node --> 
+	kvs_free(node->value);
+
+	char *kvalue = kvs_malloc(len_val);
+	if (kvalue == NULL) return -1;
+	memset(kvalue, 0, len_val);
+	memcpy(kvalue, value, len_val);
+
+	node->value = kvalue;
+	node->len_val = len_val;
+
+	return 0;
+}
+
+
+/*
+ * @return >=0 success -1 error -2 not exist
+ */
+int kvs_hash_resp_exist(kvs_hash_t *hash, char* key, int len_key) {
+
+	if(!hash || !key || len_key <=0) return -1;
+
+	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+
+	hashnode_t *node = hash->nodes[idx];
+
+	while (node != NULL) {
+
+		if (node->len_key == len_key && memcmp(node->key, key, len_key) == 0) {
+			return 0;
+		}
+
+		node = node->next;
+	}
+
+	return -2;
+
+}
+
+typedef void(*kvs_item_callback)(char *key, int len_key, char *value, int len_val, void* arg);
+
+void kvs_hash_filter(kvs_hash_t *hash, kvs_item_callback callback, void *arg) {
+	if(!hash || !callback) return;
+
+	int i = 0;
+	for(i = 0; i < hash->max_slots; ++ i) {
+		hashnode_t *node = hash->nodes[i];
+		while(node != NULL) {
+			callback(node->key, node->len_key, node->value, node->len_val, arg);
+			node = node->next;
+		}
+	}
+}
+
 #if 0
 int main() {
 
@@ -275,7 +508,7 @@ int main() {
 	ret = kvs_hash_exist(&hash, "Teacher1");
 	printf("Exist Teacher1 ret : %d\n", ret);
 
-	kvs_hash_destory(&hash);
+	kvs_hash_destroy(&hash);
 
 	return 0;
 }

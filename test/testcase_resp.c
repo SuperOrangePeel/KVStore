@@ -37,6 +37,42 @@ int recv_msg(int connfd, char *msg, int length) {
 }
 
 
+int format_hset(char *buf, int i) {
+    char key[32], val[64];
+    sprintf(key, "key:%07d", i);
+    sprintf(val, "value_content_%07d", i);
+    return sprintf(buf, "*3\r\n$4\r\nHSET\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
+                   strlen(key), key, strlen(val), val);
+}
+
+int format_hget(char *buf, int i) {
+	char key[32];
+	sprintf(key, "key:%07d", i);
+	return sprintf(buf, "*2\r\n$4\r\nHGET\r\n$%ld\r\n%s\r\n", 
+				   strlen(key), key);
+}
+
+int format_hexist(char *buf, int i) {
+	char key[32];
+	sprintf(key, "key:%07d", i);
+	return sprintf(buf, "*2\r\n$6\r\nHEXIST\r\n$%ld\r\n%s\r\n", 
+				   strlen(key), key);
+}
+
+int format_hmod(char *buf, int i) {
+	char key[32], val[64];
+	sprintf(key, "key:%07d", i);
+	sprintf(val, "modified_value_%07d", i);
+	return sprintf(buf, "*3\r\n$4\r\nHMOD\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
+				   strlen(key), key, strlen(val), val);
+}
+
+int format_hdel(char *buf, int i) {
+	char key[32];
+	sprintf(key, "key:%07d", i);
+	return sprintf(buf, "*2\r\n$4\r\nHDEL\r\n$%ld\r\n%s\r\n", 
+				   strlen(key), key);
+}
 
 
 void testcase(int connfd, char *msg, char *pattern, char *casename) {
@@ -49,7 +85,7 @@ void testcase(int connfd, char *msg, char *pattern, char *casename) {
 	recv_msg(connfd, result, MAX_MSG_LENGTH);
 
 	if (strcmp(result, pattern) == 0) {
-		printf("==> PASS ->  %s\n", casename);
+		//printf("==> PASS ->  %s\n", casename);
 	} else {
 		printf("==> FAILED -> %s, '%s' != '%s' \n", casename, result, pattern);
 		exit(1);
@@ -80,152 +116,47 @@ int connect_tcpserver(const char *ip, unsigned short port) {
 }
 
 
-void array_testcase(int connfd) {
-
-	testcase(connfd, "SET Teacher King", "OK\r\n", "SET-Teacher");
-	testcase(connfd, "GET Teacher", "King\r\n", "GET-Teacher");
-	testcase(connfd, "MOD Teacher Darren", "OK\r\n", "MOD-Teacher");
-	testcase(connfd, "GET Teacher", "Darren\r\n", "GET-Teacher");
-	testcase(connfd, "EXIST Teacher", "EXIST\r\n", "GET-Teacher");
-	testcase(connfd, "DEL Teacher", "OK\r\n", "DEL-Teacher");
-	testcase(connfd, "GET Teacher", "NO EXIST\r\n", "GET-Teacher");
-	testcase(connfd, "MOD Teacher KING", "NO EXIST\r\n", "MOD-Teacher");
-	testcase(connfd, "EXIST Teacher", "NO EXIST\r\n", "GET-Teacher");
-
-}
-
-void array_testcase_1w(int connfd) {
-
-	int count = 10000;
-	int i = 0;
-
-	struct timeval tv_begin;
-	gettimeofday(&tv_begin, NULL);
-
-	for (i = 0;i < count;i ++) {
-
-		testcase(connfd, "SET Teacher King", "OK\r\n", "SET-Teacher");
-		testcase(connfd, "GET Teacher", "King\r\n", "GET-Teacher");
-		testcase(connfd, "MOD Teacher Darren", "OK\r\n", "MOD-Teacher");
-		testcase(connfd, "GET Teacher", "Darren\r\n", "GET-Teacher");
-		testcase(connfd, "EXIST Teacher", "EXIST\r\n", "GET-Teacher");
-		testcase(connfd, "DEL Teacher", "OK\r\n", "DEL-Teacher");
-		testcase(connfd, "GET Teacher", "NO EXIST\r\n", "GET-Teacher");
-		testcase(connfd, "MOD Teacher KING", "NO EXIST\r\n", "MOD-Teacher");
-		testcase(connfd, "EXIST Teacher", "NO EXIST\r\n", "GET-Teacher");
-
-	}
-
-	struct timeval tv_end;
-	gettimeofday(&tv_end, NULL);
-
-	int time_used = TIME_SUB_MS(tv_end, tv_begin); // ms
-
-	printf("array testcase --> time_used: %d, qps: %d\n", time_used, 90000 * 1000 / time_used);
-
-}
-
-
-void rbtree_testcase(int connfd) {
-
-	testcase(connfd, "RSET Teacher King", "OK\r\n", "RSET-Teacher");
-	testcase(connfd, "RGET Teacher", "King\r\n", "RGET-King-Teacher");
-	testcase(connfd, "RMOD Teacher Darren", "OK\r\n", "RMOD-D-Teacher");
-	testcase(connfd, "RGET Teacher", "Darren\r\n", "RGET-Darren-Teacher");
-	testcase(connfd, "REXIST Teacher", "EXIST\r\n", "REXIST-Teacher");
-	testcase(connfd, "RDEL Teacher", "OK\r\n", "RDEL-Teacher");
-	testcase(connfd, "RGET Teacher", "NO EXIST\r\n", "RGET-K-Teacher");
-	testcase(connfd, "RMOD Teacher KING", "NO EXIST\r\n", "RMOD-K-Teacher");
-	testcase(connfd, "REXIST Teacher", "NO EXIST\r\n", "REXIST-Teacher");
-
-}
-
-void rbtree_testcase_1w(int connfd) {
-
-	int count = 10000;
-	int i = 0;
-
-	struct timeval tv_begin;
-	gettimeofday(&tv_begin, NULL);
-
-	for (i = 0;i < count;i ++) {
-
-		testcase(connfd, "RSET Teacher King", "OK\r\n", "RSET-Teacher");
-		testcase(connfd, "RGET Teacher", "King\r\n", "RGET-King-Teacher");
-		testcase(connfd, "RMOD Teacher Darren", "OK\r\n", "RMOD-D-Teacher");
-		testcase(connfd, "RGET Teacher", "Darren\r\n", "RGET-Darren-Teacher");
-		testcase(connfd, "REXIST Teacher", "EXIST\r\n", "REXIST-Teacher");
-		testcase(connfd, "RDEL Teacher", "OK\r\n", "RDEL-Teacher");
-		testcase(connfd, "RGET Teacher", "NO EXIST\r\n", "RGET-K-Teacher");
-		testcase(connfd, "RMOD Teacher KING", "NO EXIST\r\n", "RMOD-K-Teacher");
-		testcase(connfd, "REXIST Teacher", "NO EXIST\r\n", "REXIST-Teacher");
-
-	}
-
-	struct timeval tv_end;
-	gettimeofday(&tv_end, NULL);
-
-	int time_used = TIME_SUB_MS(tv_end, tv_begin); // ms
-
-	printf("rbtree testcase --> time_used: %d, qps: %d\n", time_used, 90000 * 1000 / time_used);
-	
-}
-
-
-void rbtree_testcase_3w(int connfd) {
-
-	int count = 10000;
-	int i = 0;
-
-	struct timeval tv_begin;
-	gettimeofday(&tv_begin, NULL);
-
-	for (i = 0;i < count;i ++) {
-
-		char cmd[128] = {0};
-		snprintf(cmd, 128, "RSET Teacher%d King%d", i, i);
-		testcase(connfd, cmd, "OK\r\n", "RSET-Teacher");
-	}
-
-	for (i = 0;i < count;i ++) {
-
-		char cmd[128] = {0};
-		snprintf(cmd, 128, "RGET Teacher%d", i);
-
-		char result[128] = {0};
-		snprintf(result, 128, "King%d\r\n", i);
-		
-		testcase(connfd, cmd, result, "RGET-King-Teacher");
-	}
-
-	for (i = 0;i < count;i ++) {
-
-		char cmd[128] = {0};
-		snprintf(cmd, 128, "RMOD Teacher%d King%d", i, i);
-		testcase(connfd, cmd, "OK\r\n", "RGET-King-Teacher");
-	}
-
-	struct timeval tv_end;
-	gettimeofday(&tv_end, NULL);
-
-	int time_used = TIME_SUB_MS(tv_end, tv_begin); // ms
-
-	printf("rbtree testcase --> time_used: %d, qps: %d\n", time_used, 30000 * 1000 / time_used);
-
-}
-
 void hash_testcase(int connfd) {
+	char* msg_buf = (char*)malloc(512);
+	char* resp_buf = (char*)malloc(512);
 
-	testcase(connfd, "HSET Teacher King", "OK\r\n", "HSET-Teacher");
-	testcase(connfd, "HGET Teacher", "King\r\n", "HGET-King-Teacher");
-	testcase(connfd, "HMOD Teacher Darren", "OK\r\n", "HMOD-D-Teacher");
-	testcase(connfd, "HGET Teacher", "Darren\r\n", "HGET-Darren-Teacher");
-	testcase(connfd, "HEXIST Teacher", "EXIST\r\n", "HEXIST-Teacher");
-	testcase(connfd, "HDEL Teacher", "OK\r\n", "HDEL-Teacher");
-	testcase(connfd, "HGET Teacher", "NO EXIST\r\n", "HGET-K-Teacher");
-	testcase(connfd, "HMOD Teacher KING", "NO EXIST\r\n", "HMOD-K-Teacher");
-	testcase(connfd, "HEXIST Teacher", "NO EXIST\r\n", "HEXIST-Teacher");
+	int count = 50000;
+	struct timeval tv_begin;
+	gettimeofday(&tv_begin, NULL);
+	int i = 0;
+	// HSET test
+	for (i = 0;i < count;i ++) {
+		int msg_len = format_hset(msg_buf, i);
+		testcase(connfd, msg_buf, "+OK\r\n", "HSET-Test");
+	}
+	// HGET test
+	for (i = 0;i < count;i ++) {
+		int msg_len = format_hget(msg_buf, i);
+		int val_len = sprintf(resp_buf, "$%ld\r\nvalue_content_%07d\r\n", strlen("value_content_XXXXXXX"), i);
+		testcase(connfd, msg_buf, resp_buf, "HGET-Test");
+	}
+	// HEXIST test
+	for (i = 0;i < count;i ++) {
+		int msg_len = format_hexist(msg_buf, i);
+		testcase(connfd, msg_buf, "+EXIST\r\n", "HEXIST-Test");
+	}
+	// HMOD test
+	for (i = 0;i < count;i ++) {
+		int msg_len = format_hmod(msg_buf, i);
+		testcase(connfd, msg_buf, "+OK\r\n", "HMOD-Test");
+	}
+	// HDEL test
+	for (i = 0;i < count;i ++) {
+		int msg_len = format_hdel(msg_buf, i);
+		testcase(connfd, msg_buf, "+OK\r\n", "HDEL-Test");
+	}
+	struct timeval tv_end;
+	gettimeofday(&tv_end, NULL);
+	int time_used = TIME_SUB_MS(tv_end, tv_begin); // ms
+	printf("hash testcase --> time_used: %d, qps: %d\n", time_used, 50000 * 1000 / time_used);
 
+	free(msg_buf);
+	free(resp_buf);
 }
 
 //har *msg_set = "*3\r\n$3\r\nSET\r\n$4\r\nname\r\n$7\r\nJack Ma\r\n";
@@ -278,6 +209,7 @@ void array_test_set_get_a_blog_test(int connfd) {
 }
 
 
+
 // testcase 192.168.243.131  2000
 int main(int argc, char *argv[]) {
 
@@ -307,8 +239,8 @@ int main(int argc, char *argv[]) {
 
 	// testcase(connfd, msg_del, "+OK\r\n", "msg_set_get");
 
-	array_test_set_get_a_blog_test(connfd);
-
+	//array_test_set_get_a_blog_test(connfd);
+	hash_testcase(connfd);
 
 	//sendfile();
 

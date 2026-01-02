@@ -451,7 +451,7 @@ int kvs_rbtree_create(kvs_rbtree_t *inst) {
 
 }
 
-void kvs_rbtree_destory(kvs_rbtree_t *inst) {
+void kvs_rbtree_destroy(kvs_rbtree_t *inst) {
 
 	if (inst == NULL) return ;
 

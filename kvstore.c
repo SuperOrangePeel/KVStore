@@ -35,7 +35,8 @@ void kvs_free(void *ptr) {
 const char *command[] = {
 	"SET", "GET", "DEL", "MOD", "EXIST",
 	"RSET", "RGET", "RDEL", "RMOD", "REXIST",
-	"HSET", "HGET", "HDEL", "HMOD", "HEXIST"
+	"HSET", "HGET", "HDEL", "HMOD", "HEXIST",
+	"SAVE"
 };
 
 const int command_length[] = {
@@ -350,6 +351,10 @@ int kvs_execute_one_command(kvs_resp_cmd_t *cmd_p, char **value_out, int *len_va
 	char *value = cmd_p->val;
 	int len_val = cmd_p->len_val;
 
+	// used for GET commands
+	char *ret_val = NULL;
+	int ret_val_len = 0;
+
 	switch(cmd) {
 #if ENABLE_ARRAY
 	case KVS_CMD_SET:
@@ -365,8 +370,6 @@ int kvs_execute_one_command(kvs_resp_cmd_t *cmd_p, char **value_out, int *len_va
 		
 		break;
 	case KVS_CMD_GET: {
-		char* ret_val;
-		int ret_val_len;
 		ret = kvs_array_resp_get(&global_array, key, len_key, &ret_val, &ret_val_len);
 		if (ret == -2) {
 			return KVS_RESP_NOT_EXIST;
@@ -468,53 +471,60 @@ int kvs_execute_one_command(kvs_resp_cmd_t *cmd_p, char **value_out, int *len_va
 #endif
 #if ENABLE_HASH
 	case KVS_CMD_HSET:
-		ret = kvs_hash_set(&global_hash ,key, value);
-		if (ret < 0) {
-			return KVS_RESP_ERROR;
-		} else if (ret == 0) {
+		ret = kvs_hash_resp_set(&global_hash ,key, len_key, value, len_val);
+		if(ret == -2) {
+			return KVS_RESP_EXIST;
+		} else if (ret >=0)  {
 			return KVS_RESP_OK;
 		} else {
-			return KVS_RESP_EXIST;
-		} 
+			return KVS_RESP_ERROR;
+		}
 		
 		break;
 	case KVS_CMD_HGET: {
-		char *result = kvs_hash_get(&global_hash, key);
-		if (result == NULL) {
+		ret = kvs_hash_resp_get(&global_hash, key, len_key, &ret_val, &ret_val_len);
+		if (ret == -2) {
 			return KVS_RESP_NOT_EXIST;
-		} else {
-			*value_out = result;
-			*len_val_out = strlen(result);
+		} else if(ret >= 0) {
+			if(value_out == NULL || len_val_out == NULL) {
+				return KVS_RESP_ERROR;
+			}
+			*value_out = ret_val;
+			*len_val_out =  ret_val_len;
 			return KVS_RESP_VALUE;
+		} else {
+			return KVS_RESP_ERROR;
 		}
 		break;
 	}
 	case KVS_CMD_HDEL:
-		ret = kvs_hash_del(&global_hash ,key);
-		if (ret < 0) {
-			return KVS_RESP_ERROR;
-		} else if (ret == 0) {
+		ret = kvs_hash_resp_del(&global_hash ,key, len_key);
+		if( ret == -2) {
+			return KVS_RESP_NOT_EXIST;
+		} else if (ret >= 0) {
 			return KVS_RESP_OK;
 		} else {
-			return KVS_RESP_NOT_EXIST;
+			return KVS_RESP_ERROR;
 		}
 		break;
 	case KVS_CMD_HMOD:
-		ret = kvs_hash_mod(&global_hash ,key, value);
-		if (ret < 0) {
-			return KVS_RESP_ERROR;
-		} else if (ret == 0) {
+		ret = kvs_hash_resp_mod(&global_hash ,key, len_key, value, len_val);
+		if( ret == -2) {
+			return KVS_RESP_NOT_EXIST;
+		} else if (ret >= 0) {
 			return KVS_RESP_OK;
 		} else {
-			return KVS_RESP_NOT_EXIST;
+			return KVS_RESP_ERROR;
 		}
 		break;
 	case KVS_CMD_HEXIST:
-		ret = kvs_hash_exist(&global_hash ,key);
-		if (ret == 0) {
+		ret = kvs_hash_resp_exist(&global_hash ,key, len_key);
+		if( ret >= 0) {
 			return KVS_RESP_EXIST;
-		} else {
+		} else if (ret == -2) {
 			return KVS_RESP_NOT_EXIST;
+		} else {
+			return KVS_RESP_ERROR;
 		}
 		break;
 #endif
@@ -652,7 +662,7 @@ static int total_command = 0;
  * length_r: length fo response
  * @return : length of processed message
  */
-int kvs_protocol(char *msg, int length, char *response, int* length_r) {  
+int kvs_protocol(char *msg, int length, char *response, int rsp_buf_len, int* length_r) {  
 	// todo: response_len avoid buffer overflow
 	if (msg == NULL || length <= 0 || response == NULL || length_r == NULL) return -1;
 	//printf("Debug: length_r pointer address = %p\n", (void*)length_r);
@@ -676,16 +686,23 @@ int kvs_protocol(char *msg, int length, char *response, int* length_r) {
 		int len_val_out = 0;
 		int status_num = kvs_execute_one_command(&kvs_resp_cmds[i], &value_out, &len_val_out);
 		int r_len = kvs_format_response(status_num, value_out, len_val_out, response + r_len_total);
+		if(r_len_total + r_len > rsp_buf_len) {
+			// overflow
+			printf("%s:%d response buffer overflow\n", __FILE__, __LINE__);
+			assert(0);
+		}
 		if(status_num == KVS_RESP_OK) ok_count ++;
 		else {
 			//printf("status num:%d\n", status_num);
 			error_count ++;
 		}
-
+#if KVS_PERSISTENCE
 		if(status_num == KVS_RESP_OK && kvs_is_write_cmd(kvs_resp_cmds[i].cmd_type)) {
-			//kvs_persistence_write_aof(&kvs_aof_ctx, kvs_resp_cmds[i].raw_ptr, kvs_resp_cmds[i].raw_len);
+			kvs_persistence_write_aof(&kvs_aof_ctx, kvs_resp_cmds[i].raw_ptr, kvs_resp_cmds[i].raw_len);
 		}
+#endif 
 		r_len_total += r_len;
+
 		
 	}
 	//total_command += ok_count;
@@ -758,8 +775,9 @@ int init_kvengine(void) {
 #endif
 
 
-	//kvs_recover_aof("kvs_aof.aof");
-	//kvs_persistence_init(&kvs_aof_ctx, "kvs_aof.aof");
+	kvs_recover_aof("kvs_aof.aof");
+	printf("AOF recovery completed.\n");
+	kvs_persistence_init(&kvs_aof_ctx, "kvs_aof.aof");
 
 	return 0;
 }
@@ -767,13 +785,13 @@ int init_kvengine(void) {
 void dest_kvengine(void) {
 	kvs_persistence_close(&kvs_aof_ctx);
 #if ENABLE_ARRAY
-	kvs_array_destory(&global_array);
+	kvs_array_destroy(&global_array);
 #endif
 #if ENABLE_RBTREE
-	kvs_rbtree_destory(&global_rbtree);
+	kvs_rbtree_destroy(&global_rbtree);
 #endif
 #if ENABLE_HASH
-	kvs_hash_destory(&global_hash);
+	kvs_hash_destroy(&global_hash);
 #endif
 
 }

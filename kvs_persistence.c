@@ -152,6 +152,20 @@ int kvs_persistence_load_aof(char *aof_name, kvs_pest_get_exe_one_cmd func) {
 }
 
 
+
+
+/*
+ * 
+ */
+int kvs_rdb_save(char* filename) {
+    
+
+}
+
+int kvs_rdb_load(char* filename) {
+
+}
+
 // int kvs_array_persistence_full(kvs_array_t *inst, char* filename) {
 //     if(inst == NULL || filename == NULL) {
 //         return -1;

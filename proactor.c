@@ -14,7 +14,7 @@
 
 #define KVS_CONNS_INST(fd) (fd - 3)
 
-extern int kvs_protocol(char *msg, int length, char *response);
+extern int kvs_protocol(char *msg, int length, char *response, int rsp_buf_len, int* length_r);
 
 
 
@@ -97,7 +97,7 @@ int set_event_accept(struct io_uring *ring, int sockfd, struct sockaddr *addr,
 }
 
 
-typedef int (*msg_handler)(char *msg, int length, char *response, int* length_r);
+typedef int (*msg_handler)(char *msg, int length, char *response, int rsp_buf_len, int* length_r);
 static msg_handler kvs_handler;
 
 #define CONNECT_NUM_MAX 5
@@ -156,19 +156,36 @@ int proactor_start(unsigned short port, msg_handler handler) {
 
 	while (1) {
 
-		io_uring_submit(&ring);
+		// io_uring_submit(&ring);
 
 
+		// struct io_uring_cqe *cqe;
+		// io_uring_wait_cqe(&ring, &cqe);
+
+		// struct io_uring_cqe *cqes[128];
+		// int nready = io_uring_peek_batch_cqe(&ring, cqes, 128);  // epoll_wait
+
+		// int i = 0;
+		// for (i = 0;i < nready;i ++) 
+		
 		struct io_uring_cqe *cqe;
-		io_uring_wait_cqe(&ring, &cqe);
+		unsigned head;
+		int count = 0;
 
-		struct io_uring_cqe *cqes[128];
-		int nready = io_uring_peek_batch_cqe(&ring, cqes, 128);  // epoll_wait
+		// 1. 核心武器：提交并等待
+		// 这个函数会把之前所有 set_event 产生的 SQE 一次性提交
+		// 并且至少等待 1 个事件完成才返回
+		int ret = io_uring_submit_and_wait(&ring, 1);
+		if (ret < 0) {
+			if (errno == EINTR) continue;
+			break;
+		}
 
-		int i = 0;
-		for (i = 0;i < nready;i ++) {
-
-			struct io_uring_cqe *entries = cqes[i];
+		// 2. 遍历所有已完成的事件
+		// 使用 io_uring 提供的标准宏，既安全又高效
+		io_uring_for_each_cqe(&ring, head, cqe) {
+			count ++ ;
+			struct io_uring_cqe *entries = cqe;
 			struct conn_info result;
 			memcpy(&result, &entries->user_data, sizeof(struct conn_info));
 
@@ -199,7 +216,7 @@ int proactor_start(unsigned short port, msg_handler handler) {
 
 					int length_resp = 0;
 					// process the received data
-					int length_processed = kvs_handler(r_buffer, *r_buffer_len, w_buffer, &length_resp);
+					int length_processed = kvs_handler(r_buffer, *r_buffer_len, w_buffer, BUFFER_LENGTH, &length_resp);
 					// move the unprocessed data to the beginning of the read buffer
 					
 					if(length_processed > *r_buffer_len) {
@@ -233,7 +250,7 @@ int proactor_start(unsigned short port, msg_handler handler) {
 			
 		}
 
-		io_uring_cq_advance(&ring, nready);
+		io_uring_cq_advance(&ring, count);
 	}
 
 }

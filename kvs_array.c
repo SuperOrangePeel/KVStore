@@ -24,7 +24,7 @@ int kvs_array_create(kvs_array_t *inst) {
 	return 0;
 }
 
-void kvs_array_destory(kvs_array_t *inst) {
+void kvs_array_destroy(kvs_array_t *inst) {
 
 	if (!inst) return ;
 

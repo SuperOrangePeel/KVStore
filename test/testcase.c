@@ -104,12 +104,11 @@ void array_testcase_1w(int connfd) {
 		testcase(connfd, "GET Teacher", "King\r\n", "GET-Teacher");
 		testcase(connfd, "MOD Teacher Darren", "OK\r\n", "MOD-Teacher");
 		testcase(connfd, "GET Teacher", "Darren\r\n", "GET-Teacher");
-		testcase(connfd, "EXIST Teacher", "EXIST\r\n", "GET-Teacher");
+		testcase(connfd, "EXIST Teacher", "EXIST\r\n", "EXIST-Teacher");
 		testcase(connfd, "DEL Teacher", "OK\r\n", "DEL-Teacher");
 		testcase(connfd, "GET Teacher", "NO EXIST\r\n", "GET-Teacher");
 		testcase(connfd, "MOD Teacher KING", "NO EXIST\r\n", "MOD-Teacher");
-		testcase(connfd, "EXIST Teacher", "NO EXIST\r\n", "GET-Teacher");
-
+		testcase(connfd, "EXIST Teacher", "NO EXIST\r\n", "EXIST-Teacher");
 	}
 
 	struct timeval tv_end;
