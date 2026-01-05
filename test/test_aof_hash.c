@@ -4,9 +4,10 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
+#include <errno.h>
 
 #define MAX_ITEMS 1048576 
-#define BUF_SIZE 65536     
+#define BUF_SIZE 1048576  // 1 MB     
 #define BATCH_SIZE 500    // 适当减小 Batch，防止接收缓冲区溢出
 
 double get_time_diff(struct timeval start, struct timeval end) {
@@ -31,16 +32,17 @@ int format_hget(char *buf, int i) {
 }
 
 // 统计缓冲区中出现的字符串次数
-int count_occurrences(const char *buf, int len, const char *pattern) {
+int count_confirmed_responses(const char *buf, int len) {
     int count = 0;
-    const char *ptr = buf;
-    int pat_len = strlen(pattern);
-    while (ptr < buf + len && (ptr = strstr(ptr, pattern)) != NULL) {
-        count++;
-        ptr += pat_len;
+    for (int i = 0; i < len; i++) {
+        
+        if (buf[i] == '+' || buf[i] == '$') {
+            count++;
+        }
     }
     return count;
 }
+
 
 void run_test(const char *ip, int port, int mode, int count) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -61,7 +63,6 @@ void run_test(const char *ip, int port, int mode, int count) {
     struct timeval start_time, end_time;
 
     const char* mode_str = (mode == 1 ? "HSET" : "HGET");
-    const char* pattern = (mode == 1 ? "+OK\r\n" : "value_content_");
 
     printf("Starting %s Test: %d items...\n", mode_str, count);
     gettimeofday(&start_time, NULL);
@@ -76,9 +77,13 @@ void run_test(const char *ip, int port, int mode, int count) {
 
         // 2. 批量接收并校验
         int r = recv(sock, recv_buf, sizeof(recv_buf) - 1, MSG_DONTWAIT);
+
+        if(r <=0 && errno != EAGAIN) {
+            perror("Receive failed");
+            break;
+        }
         if (r > 0) {
-            recv_buf[r] = '\0';
-            success_count += count_occurrences(recv_buf, r, pattern);
+            success_count += count_confirmed_responses(recv_buf, r);
         } else if (r == 0) {
             printf("\nServer closed connection. Total handled: %d\n", success_count);
             break;
@@ -86,7 +91,7 @@ void run_test(const char *ip, int port, int mode, int count) {
 
         // 3. 打印进度
         if (sent_count % 10000 == 0) {
-            printf("\rProgress: Sent %d, Confirmed %d", sent_count, success_count);
+            printf("Progress: Sent %d, Confirmed %d\n", sent_count, success_count);
             fflush(stdout);
         }
     }

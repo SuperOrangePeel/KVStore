@@ -40,7 +40,7 @@ int recv_msg(int connfd, char *msg, int length) {
 int format_hset(char *buf, int i) {
     char key[32], val[64];
     sprintf(key, "key:%07d", i);
-    sprintf(val, "value_content_%07d", i);
+    sprintf(val, "Value_content_%07d", i);
     return sprintf(buf, "*3\r\n$4\r\nHSET\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
                    strlen(key), key, strlen(val), val);
 }
@@ -132,7 +132,7 @@ void hash_testcase(int connfd) {
 	// HGET test
 	for (i = 0;i < count;i ++) {
 		int msg_len = format_hget(msg_buf, i);
-		int val_len = sprintf(resp_buf, "$%ld\r\nvalue_content_%07d\r\n", strlen("value_content_XXXXXXX"), i);
+		int val_len = sprintf(resp_buf, "$%ld\r\nValue_content_%07d\r\n", strlen("Value_content_XXXXXXX"), i);
 		testcase(connfd, msg_buf, resp_buf, "HGET-Test");
 	}
 	// HEXIST test
@@ -150,14 +150,19 @@ void hash_testcase(int connfd) {
 		int msg_len = format_hdel(msg_buf, i);
 		testcase(connfd, msg_buf, "+OK\r\n", "HDEL-Test");
 	}
+	// HEXIST test for not exist
+	for (i = 0;i < count;i ++) {
+		int msg_len = format_hexist(msg_buf, i);
+		testcase(connfd, msg_buf, "+NOT EXIST\r\n", "HEXIST-NotExist-Test");
+	}
 	struct timeval tv_end;
 	gettimeofday(&tv_end, NULL);
 	int time_used = TIME_SUB_MS(tv_end, tv_begin); // ms
-	printf("hash testcase --> time_used: %d, qps: %d\n", time_used, 50000 * 1000 / time_used);
+	printf("hash testcase --> time_used: %d, qps: %d\n", time_used, 50000 * 6 * 1000 / time_used);
 
 	free(msg_buf);
 	free(resp_buf);
-}
+} 
 
 //har *msg_set = "*3\r\n$3\r\nSET\r\n$4\r\nname\r\n$7\r\nJack Ma\r\n";
 // char *msg_get = "*2\r\n$3\r\nGET\r\n$4\r\nname\r\n";

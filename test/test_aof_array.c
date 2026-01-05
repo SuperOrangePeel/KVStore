@@ -4,7 +4,6 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
-#include <errno.h>
 
 #define MAX_ITEMS 1048576 
 #define BUF_SIZE 65536     // 增加缓冲区以处理批量响应

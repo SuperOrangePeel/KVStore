@@ -29,7 +29,7 @@ void kvs_array_destroy(kvs_array_t *inst) {
 	if (!inst) return ;
 
 	if (inst->table) {
-		kvs_free(inst->table);
+		kvs_free(inst->table, KVS_ARRAY_SIZE * sizeof(kvs_array_item_t));
 	}
 
 }
@@ -113,10 +113,10 @@ int kvs_array_del(kvs_array_t *inst, char *key) {
 
 		if (strcmp(inst->table[i].key, key) == 0) {
 
-			kvs_free(inst->table[i].key);
+			kvs_free(inst->table[i].key, inst->table[i].len_key);
 			inst->table[i].key = NULL;
 
-			kvs_free(inst->table[i].value);
+			kvs_free(inst->table[i].value, inst->table[i].len_val);
 			inst->table[i].value = NULL;
 // error: > 1024
 			if (inst->total-1 == i) {
@@ -154,7 +154,7 @@ int kvs_array_mod(kvs_array_t *inst, char *key, char *value) {
 
 		if (strcmp(inst->table[i].key, key) == 0) {
 
-			kvs_free(inst->table[i].value);
+			kvs_free(inst->table[i].value, inst->table[i].len_val);
 
 			char *kvalue = kvs_malloc(strlen(value) + 1);
 			if (kvalue == NULL) return -2;
@@ -272,11 +272,11 @@ int kvs_array_resp_del(kvs_array_t *inst, char *key, int len_key) {
 	if(idx < 0) {
 		return idx;
 	} else {
-		kvs_free(inst->table[idx].key);
+		kvs_free(inst->table[idx].key, inst->table[idx].len_key);
 		inst->table[idx].key = NULL;
 		inst->table[idx].len_key = 0;
 
-		kvs_free(inst->table[idx].value);
+		kvs_free(inst->table[idx].value, inst->table[idx].len_val);
 		inst->table[idx].value = NULL;
 		inst->table[idx].len_val = 0;
 
@@ -297,7 +297,7 @@ int kvs_array_resp_mod(kvs_array_t *inst, char *key, int len_key, char *value, i
 	if(idx < 0) {
 		return idx;
 	} else {
-		kvs_free(inst->table[idx].value);
+		kvs_free(inst->table[idx].value, inst->table[idx].len_val);
 		inst->table[idx].value = kvs_malloc(len_val);
 		memset(inst->table[idx].value, 0, len_val);
 		memcpy(inst->table[idx].value, value, len_val);

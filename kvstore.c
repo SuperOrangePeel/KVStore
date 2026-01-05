@@ -3,7 +3,9 @@
 
 
 #include "kvstore.h"
+#include "kvs_mempool.h"
 #include <fcntl.h>
+#include <stdio.h>
 
 extern kvs_aof_context_t kvs_aof_ctx;
 
@@ -23,14 +25,32 @@ extern kvs_hash_t global_hash;
 kvs_resp_cmd_t kvs_resp_cmds[KVS_RESP_CMD_MAX]; // static ?
 #endif
 
+extern kvs_mp_pool_t kvs_mem_pool;
+
 void *kvs_malloc(size_t size) {
+#if KVS_MEM_POOL
+	return kvs_mempool_alloc(&kvs_mem_pool, size);
+#else
 	return malloc(size);
+#endif	
 }
 
-void kvs_free(void *ptr) {
-	return free(ptr);
+void kvs_free(void *ptr, size_t size) {
+#if KVS_MEM_POOL
+	kvs_mempool_free(&kvs_mem_pool, ptr, size);
+#else
+
+	free(ptr);
+#endif
 }
 
+// void *kvs_mp_malloc(size_t size) {
+// 	return kvs_mempool_alloc(mempool, size);
+// }
+
+// void kvs_mp_free(void *ptr, size_t size) {
+// 	return kvs_mempool_free(mempool, ptr, size);
+// }
 
 const char *command[] = {
 	"SET", "GET", "DEL", "MOD", "EXIST",
@@ -756,6 +776,12 @@ int kvs_protocol(char *msg, int length, char *response, int rsp_buf_len, int* le
 
 
 int init_kvengine(void) {
+#if KVS_MEM_POOL
+	kvs_mempool_create(&kvs_mem_pool);
+	printf("Memory pool enabled.\n");
+#else
+	printf("Memory pool disabled.\n");
+#endif	
 	
 	
 
@@ -792,6 +818,12 @@ void dest_kvengine(void) {
 #endif
 #if ENABLE_HASH
 	kvs_hash_destroy(&global_hash);
+
+	
+#endif
+
+#if KVS_MEM_POOL
+	kvs_mempool_destroy(&kvs_mem_pool);
 #endif
 
 }

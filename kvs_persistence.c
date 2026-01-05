@@ -19,11 +19,6 @@ int kvs_persistence_init(kvs_aof_context_t *ctx, char* aof_filename) {
         return -1;
     }
     gettimeofday(&ctx->last_fsync_time, NULL);
-    //ctx->write_buffer = kvs_malloc(AOF_MAX_BUFFER_SIZE); 
-    if(ctx->write_buffer == NULL) {
-        close(ctx->aof_fd);
-        return -1;
-    }
     ctx->buffer_size = AOF_MAX_BUFFER_SIZE;
     ctx->write_offset = 0;
 
@@ -144,7 +139,11 @@ int kvs_persistence_load_aof(char *aof_name, kvs_pest_get_exe_one_cmd func) {
     if (st.st_size > total_valid_file_pos) {
         printf("AOF tail corrupted, truncating from %lld to %lld\n", 
                 (long long)st.st_size, (long long)total_valid_file_pos);
-        ftruncate(aof_fd, total_valid_file_pos);
+        if(-1 == ftruncate(aof_fd, total_valid_file_pos)) {
+            perror("ftruncate error");
+            close(aof_fd);
+            return -1;
+        }
     }
 
     close(aof_fd);

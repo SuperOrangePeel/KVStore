@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include <sys/time.h>
 
+#define KVS_MEM_POOL 1
+
 #define KVS_PERSISTENCE 1
 
 
@@ -204,7 +206,10 @@ int kvs_hash_resp_exist(kvs_hash_t *hash, char* key, int len_key);
 
 
 void *kvs_malloc(size_t size);
-void kvs_free(void *ptr);
+void kvs_free(void *ptr, size_t size);
+
+// void *kvs_mp_malloc(size_t size);
+// void kvs_mp_free(void *ptr, size_t size);
 
 typedef struct kvs_aof_context_s {
     int aof_fd;
