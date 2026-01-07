@@ -9,8 +9,6 @@
 #define KVS_MP_MAX_ALLOC_FROM_POOL (1 << KVS_MP_MAX_SHIFT)
 #define KVS_MP_ALIGNMENT 32
 
-kvs_mp_pool_t kvs_mem_pool;
-
 // static void *_kvs_mp_alloc_large(kvs_mp_pool_t *pool, size_t size) {
 //     void *p = malloc(size);
 //     if(p == NULL) return NULL;

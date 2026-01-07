@@ -1,44 +1,81 @@
-#include "kvstore.h"
+#include "kvs_persistence.h"
+#include "kvs_hash.h"
+#include "common.h"
 
+#include <bits/types/struct_iovec.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
+#include <string.h>
 
-kvs_aof_context_t kvs_aof_ctx = {0}; // global context
+enum {
+	KVS_RDB_START = 0,
+	KVS_RDB_ARRAY,
+	KVS_RDB_RBTREE,
+	KVS_RDB_HASH,
+	KVS_RDB_END
+};
 
-int kvs_persistence_init(kvs_aof_context_t *ctx, char* aof_filename) {
-    if(aof_filename == NULL) {
-        return -1;
+kvs_pers_context_t kvs_aof_ctx = {0}; // global context
+
+kvs_pers_context_t *kvs_persistence_create(char* aof_filename, char* rdb_filename) {
+    if(aof_filename == NULL || rdb_filename == NULL) {
+        return NULL;
     }
-    ctx->aof_filename = aof_filename;
-    ctx->aof_fd = open(aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
-    if(ctx->aof_fd == -1) {
-        return -1;
+
+    kvs_pers_context_t *ctx = (kvs_pers_context_t *)kvs_malloc(sizeof(kvs_pers_context_t));
+    ctx->aof_filename = (char*)kvs_malloc(strlen(aof_filename) + 1);
+    if(ctx->aof_filename == NULL) {
+        return NULL;
     }
+    strncpy(ctx->aof_filename, aof_filename, strlen(aof_filename) + 1);
+
+    // ctx->aof_fd = open(aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    // if(ctx->aof_fd == -1) {
+    //     return -1;
+    // }
+    ctx->aof_fd = -1; // not opened yet
     gettimeofday(&ctx->last_fsync_time, NULL);
     ctx->buffer_size = AOF_MAX_BUFFER_SIZE;
     ctx->write_offset = 0;
 
-    return 0;
+    ctx->rdb_filename = (char*)kvs_malloc(strlen(rdb_filename) + 1);
+    if(ctx->rdb_filename == NULL) {
+        kvs_free(ctx->aof_filename, strlen(ctx->aof_filename) + 1);
+        ctx->aof_filename = NULL;
+        return NULL;
+    }
+    strncpy(ctx->rdb_filename, rdb_filename, strlen(rdb_filename) + 1);
+    ctx->rdb_fd = NULL;
+    ctx->rdb_offset = 0;
+    ctx->rdb_size = 0;
+
+    return ctx;
 }
 
-int kvs_persistence_close(kvs_aof_context_t *ctx) {
+int kvs_persistence_destroy(kvs_pers_context_t *ctx) {
     if(ctx->aof_fd != -1) {
         close(ctx->aof_fd);
         ctx->aof_fd = -1;
     }
+    kvs_free(ctx->aof_filename, strlen(ctx->aof_filename) + 1);
+    ctx->aof_filename = NULL;
+    kvs_free(ctx->rdb_filename, strlen(ctx->rdb_filename) + 1);
+    ctx->rdb_filename = NULL;
+    kvs_free(ctx, sizeof(kvs_pers_context_t));
     return 0;
 }
 
 
-int kvs_persistence_write_aof(kvs_aof_context_t *ctx, char* data, size_t data_len) {
+int kvs_persistence_write_aof(kvs_pers_context_t *ctx, char* data, size_t data_len) {
     if(ctx == NULL || data == NULL || data_len == 0 || ctx->aof_filename == NULL) {
         return -1;
     }
-    if(ctx->aof_fd == 0) {
+    if(ctx->aof_fd == -1) {
         ctx->aof_fd = open(ctx->aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
         if (ctx->aof_fd == -1) {
             return -1;
@@ -82,10 +119,10 @@ int kvs_persistence_write_aof(kvs_aof_context_t *ctx, char* data, size_t data_le
 * @param buffer: suggested size at least 4096 bytes or 64k bytes
 * @return number of bytes read, -1 on error
 */
-int kvs_persistence_load_aof(char *aof_name, kvs_pest_get_exe_one_cmd func) {
-    if(!aof_name || !func) return -1;
+int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_pest_get_exe_one_cmd func, void* arg) {
+    if(!aof_ctx || !func) return -1;
 
-    int aof_fd = open(aof_name, O_RDWR);
+    int aof_fd = open(aof_ctx->aof_filename, O_RDWR);
     if (aof_fd == -1) return -1;
 
     char f_buf[LOAD_AOF_FILE_BUFFER_SIZE];
@@ -111,7 +148,7 @@ int kvs_persistence_load_aof(char *aof_name, kvs_pest_get_exe_one_cmd func) {
             int cmd_len = 0; // 这是一个输出参数，由解析器告诉我们这条指令有多长
             
             // 注意：这里传入解析器的必须是起始位置和当前剩余的总长度
-            int ret = func(f_buf + p_idx, total_in_buf - p_idx, &cmd_len);
+            int ret = func(f_buf + p_idx, total_in_buf - p_idx, &cmd_len, arg);
 
             if (ret >= 0) { 
                 // 解析并执行成功
@@ -147,23 +184,100 @@ int kvs_persistence_load_aof(char *aof_name, kvs_pest_get_exe_one_cmd func) {
     }
 
     close(aof_fd);
+    aof_ctx->aof_fd = -1; // reset fd to force reopen next time
     return 0;
 }
 
 
+typedef struct kvs_rdb_callback_arg_s {
+    FILE* fp;
+    int data_type;
+} kvs_rdb_callback_arg_t;
 
+
+void _rdb_callback(char *key, int len_key, char *value, int len_val, void* arg) {
+    kvs_rdb_callback_arg_t *callback_arg = (kvs_rdb_callback_arg_t *)arg;
+    FILE *fp = callback_arg->fp;
+    char dt_char = (char)callback_arg->data_type;
+    fwrite(&dt_char, sizeof(char), 1, fp);
+    fwrite(&len_key, sizeof(int), 1, fp);
+    fwrite(key, sizeof(char), len_key, fp);
+    fwrite(&len_val, sizeof(int), 1, fp);
+    fwrite(value, sizeof(char), len_val, fp);
+
+}
+
+
+
+int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_pers_rdb_cb func, void* db) {
+    if(ctx->rdb_fd != NULL) {
+        fclose(ctx->rdb_fd);
+        ctx->rdb_fd = NULL;
+    }
+    ctx->rdb_fd = fopen(ctx->rdb_filename, "wb");
+    FILE* fp = ctx->rdb_fd;
+    kvs_rdb_callback_arg_t arg;
+    arg.fp = fp;
+    arg.data_type = KVS_RDB_HASH;
+    if(fp == NULL) {
+        return -1;
+    }
+
+    func(db, _rdb_callback, (void*)&arg);
+
+    //kvs_hash_filter(&global_hash, _rdb_callback, &arg);
+    fflush(fp);
+    fsync(fileno(fp));
+    fclose(fp);
+    ctx->rdb_fd = NULL;
+    return 0;
+}
 
 /*
- * 
- */
-int kvs_rdb_save(char* filename) {
-    
-
-}
-
-int kvs_rdb_load(char* filename) {
-
-}
+ *@return 0 success -1 error -2 format error
+//  */
+// int kvs_persistence_load_rdb(kvs_pers_context_t *ctx) {
+//     if(ctx->rdb_filename == NULL) {
+//         return -1;        
+//     }
+//     if(ctx->rdb_fd == NULL) {
+//         ctx->rdb_fd = fopen(ctx->rdb_filename, "rb");
+//     }
+//     FILE* fp = ctx->rdb_fd;
+//     int data_type = 0;
+//     while(fread(&data_type, sizeof(char), 1, fp) == 1) {
+//         int len_key = 0;
+//         if(fread(&len_key, sizeof(int), 1, fp) != 1) {
+//             return -2;
+//         }
+//         char* key = (char*)kvs_malloc(len_key);
+//         if(fread(key, sizeof(char), len_key, fp) != len_key) {
+//             return -2;
+//         }
+//         int len_val = 0;
+//         if(fread(&len_val, sizeof(int), 1, fp) != 1) {
+//             return -2;
+//         }
+//         char* val = (char*)kvs_malloc(len_val);
+//         if(fread(val, sizeof(char), len_val, fp) != len_val) {
+//             return -2;
+//         }
+//         switch(data_type) {
+//             case KVS_RDB_HASH:
+//                 kvs_hash_resp_set(&global_hash, key, len_key, val, len_val);
+//                 break;
+//             case KVS_RDB_ARRAY:
+//                 // kvs_array_resp_set(&global_array, key, len_key, val, len_val);
+//                 break;
+//             case KVS_RDB_RBTREE:
+//                 // kvs_rbtree_resp_set(&global_rbtree, key, len_key, val, len_val);
+//                 break;
+//             default:
+//                 exit(-1);
+//         }
+//     }
+//     return 0;
+// }
 
 // int kvs_array_persistence_full(kvs_array_t *inst, char* filename) {
 //     if(inst == NULL || filename == NULL) {

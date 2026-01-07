@@ -1,4 +1,5 @@
-
+#include "kvs_hash.h"
+#include "common.h"
 
 
 #include <stdio.h>
@@ -7,15 +8,46 @@
 #include <pthread.h>
 
 
-#include "kvstore.h"
+
 
 
 // Key, Value --> 
 // Modify 
 
+//kvs_hash_t global_hash;
+
+#define MAX_KEY_LEN	128
+#define MAX_VALUE_LEN	512
+
+#define ENABLE_KEY_POINTER	1
 
 
-kvs_hash_t global_hash;
+typedef struct hashnode_s {
+#if ENABLE_KEY_POINTER
+	char *key;
+	char *value;
+	int len_key;
+	int len_val;
+#else
+	char key[MAX_KEY_LEN];
+	char value[MAX_VALUE_LEN];
+#endif
+	struct hashnode_s *next;
+	
+} hashnode_t;
+
+
+typedef struct hashtable_s {
+
+	hashnode_t **nodes; //* change **, 
+
+	int max_slots;
+	int count;
+
+} hashtable_t;
+
+
+
 
 
 //Connection 
@@ -132,17 +164,17 @@ hashnode_t *_create_node_resp(char *key, int len_key, char *value, int len_val) 
 }
 
 //
-int kvs_hash_create(kvs_hash_t *hash) {
+kvs_hash_t *kvs_hash_create(int size) {
 
-	if (!hash) return -1;
+	kvs_hash_t *hash = (kvs_hash_t *)kvs_malloc(sizeof(kvs_hash_t));
 
-	hash->nodes = (hashnode_t**)kvs_malloc(sizeof(hashnode_t*) * MAX_TABLE_SIZE);
-	if (!hash->nodes) return -1;
+	hash->nodes = (hashnode_t**)kvs_malloc(sizeof(hashnode_t*) * size);
+	if (!hash->nodes) return NULL;
 
-	hash->max_slots = MAX_TABLE_SIZE;
+	hash->max_slots = size;
 	hash->count = 0; 
 
-	return 0;
+	return hash;
 }
 
 // 
@@ -176,7 +208,7 @@ int kvs_hash_set(kvs_hash_t *hash, char *key, char *value) {
 
 	if (!hash || !key || !value) return -1;
 
-	int idx = _hash(key, MAX_TABLE_SIZE);
+	int idx = _hash(key, KVS_MAX_HASH_SIZE);
 
 	hashnode_t *node = hash->nodes[idx];
 #if 1
@@ -202,7 +234,7 @@ char * kvs_hash_get(kvs_hash_t *hash, char *key) {
 
 	if (!hash || !key) return NULL;
 
-	int idx = _hash(key, MAX_TABLE_SIZE);
+	int idx = _hash(key, KVS_MAX_HASH_SIZE);
 
 	hashnode_t *node = hash->nodes[idx];
 
@@ -224,7 +256,7 @@ int kvs_hash_mod(kvs_hash_t *hash, char *key, char *value) {
 
 	if (!hash || !key) return -1;
 
-	int idx = _hash(key, MAX_TABLE_SIZE);
+	int idx = _hash(key, KVS_MAX_HASH_SIZE);
 
 	hashnode_t *node = hash->nodes[idx];
 
@@ -261,7 +293,7 @@ int kvs_hash_count(kvs_hash_t *hash) {
 int kvs_hash_del(kvs_hash_t *hash, char *key) {
 	if (!hash || !key) return -2;
 
-	int idx = _hash(key, MAX_TABLE_SIZE);
+	int idx = _hash(key, KVS_MAX_HASH_SIZE);
 
 	hashnode_t *head = hash->nodes[idx];
 	if (head == NULL) return -1; // noexist
@@ -319,7 +351,7 @@ int kvs_hash_resp_set(kvs_hash_t *hash, char *key, int len_key, char *value, int
 
 	if (!hash || !key || !value || len_key <=0 || len_val <=0) return -1;
 
-	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+	int idx = _hash_resp(key, len_key, KVS_MAX_HASH_SIZE);
 	hashnode_t *node = hash->nodes[idx];
 	while(node != NULL) {
 		if (node->len_key == len_key && memcmp(node->key, key, len_key) == 0) {
@@ -345,7 +377,7 @@ int kvs_hash_resp_get(kvs_hash_t *hash, char *key, int len_key, char **value, in
 
 	if (!hash || !key || len_key <=0 || !value || !len_val) return -1;
 
-	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+	int idx = _hash_resp(key, len_key, KVS_MAX_HASH_SIZE);
 
 	hashnode_t *node = hash->nodes[idx];
 
@@ -369,7 +401,7 @@ int kvs_hash_resp_get(kvs_hash_t *hash, char *key, int len_key, char **value, in
 int kvs_hash_resp_del(kvs_hash_t *hash, char *key, int len_key) {
 	if (!hash || !key || len_key <=0) return -1;
 
-	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+	int idx = _hash_resp(key, len_key, KVS_MAX_HASH_SIZE);
 
 	hashnode_t *head = hash->nodes[idx];
 	if (head == NULL) return -2; // not exist
@@ -412,7 +444,7 @@ int kvs_hash_resp_mod(kvs_hash_t *hash, char *key, int len_key, char *value, int
 
 	if (!hash || !key || len_key <=0 || !value || len_val <=0) return -1;
 
-	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+	int idx = _hash_resp(key, len_key, KVS_MAX_HASH_SIZE);
 
 	hashnode_t *node = hash->nodes[idx];
 
@@ -451,7 +483,7 @@ int kvs_hash_resp_exist(kvs_hash_t *hash, char* key, int len_key) {
 
 	if(!hash || !key || len_key <=0) return -1;
 
-	int idx = _hash_resp(key, len_key, MAX_TABLE_SIZE);
+	int idx = _hash_resp(key, len_key, KVS_MAX_HASH_SIZE);
 
 	hashnode_t *node = hash->nodes[idx];
 
@@ -468,7 +500,7 @@ int kvs_hash_resp_exist(kvs_hash_t *hash, char* key, int len_key) {
 
 }
 
-typedef void(*kvs_item_callback)(char *key, int len_key, char *value, int len_val, void* arg);
+
 
 void kvs_hash_filter(kvs_hash_t *hash, kvs_item_callback callback, void *arg) {
 	if(!hash || !callback) return;

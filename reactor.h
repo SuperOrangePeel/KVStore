@@ -2,8 +2,8 @@
 
 
 
-#ifndef __SERVER_H__
-#define __SERVER_H__
+#ifndef __REACTOR_H__
+#define __REACTOR_H__
 
 #define BUFFER_LENGTH		1024
 

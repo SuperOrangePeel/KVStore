@@ -123,6 +123,7 @@ bool search(SkipList* skipList, int key) {
     }
 }
 
+#if 0
 int main() {
     SkipList* skipList = createSkipList();
     
@@ -142,3 +143,4 @@ int main() {
 
 
 
+#endif

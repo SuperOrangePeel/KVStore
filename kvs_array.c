@@ -1,22 +1,25 @@
 
+#include "kvs_array.h"
+#include "common.h"
 
-#include "kvstore.h"
 
+#include <stdio.h>
+#include <string.h>
 
 // singleton
 
-kvs_array_t global_array = {0};
+//kvs_array_t global_array = {0};
 
-int kvs_array_create(kvs_array_t *inst) {
-
-	if (!inst) return -1;
+kvs_array_t *kvs_array_create(int size) {
+	if(size <= 0) return NULL;
+	kvs_array_t *inst = (kvs_array_t *)kvs_malloc(sizeof(kvs_array_t));
 	if (inst->table) {
 		printf("table has alloc\n");
-		return -1;
+		return NULL;
 	}	
-	inst->table = kvs_malloc(KVS_ARRAY_SIZE * sizeof(kvs_array_item_t));
+	inst->table = kvs_malloc(size * sizeof(kvs_array_item_t));
 	if (!inst->table) {
-		return -1;
+		return NULL;
 	}
 
 	inst->total = 0;

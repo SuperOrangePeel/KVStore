@@ -1,12 +1,10 @@
-
+#include "kvs_rbtree.h"
+#include "common.h"
 
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-
-#include "kvstore.h"
 
 rbtree_node *rbtree_mini(rbtree *T, rbtree_node *x) {
 	while (x->left != T->nil) {
@@ -434,21 +432,36 @@ int main() {
 #endif
 
 
-typedef struct _rbtree kvs_rbtree_t; 
+//typedef struct _rbtree kvs_rbtree_t; 
 
-kvs_rbtree_t global_rbtree;
+//vs_rbtree_t global_rbtree;
 
 // 5 + 2
-int kvs_rbtree_create(kvs_rbtree_t *inst) {
+// int kvs_rbtree_create(kvs_rbtree_t *inst) {
 
-	if (inst == NULL) return 1;
+// 	if (inst == NULL) return 1;
+
+// 	inst->nil = (rbtree_node*)kvs_malloc(sizeof(rbtree_node));
+// 	inst->nil->color = BLACK;
+// 	inst->root = inst->nil;
+
+// 	return 0;
+
+// }
+
+kvs_rbtree_t* kvs_rbtree_create() {
+	kvs_rbtree_t *inst = (kvs_rbtree_t *)kvs_malloc(sizeof(kvs_rbtree_t));
+	if (inst == NULL) return NULL;
 
 	inst->nil = (rbtree_node*)kvs_malloc(sizeof(rbtree_node));
+	if (inst->nil == NULL) {
+		kvs_free(inst, sizeof(kvs_rbtree_t));
+		return NULL;
+	}
 	inst->nil->color = BLACK;
 	inst->root = inst->nil;
 
-	return 0;
-
+	return inst;
 }
 
 void kvs_rbtree_destroy(kvs_rbtree_t *inst) {
