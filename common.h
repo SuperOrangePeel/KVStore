@@ -14,4 +14,6 @@ void kvs_global_mempool_destroy();
 void *kvs_malloc(size_t size);
 void kvs_free(void *ptr, size_t size);
 
+
+int kvs_parse_int(char* s, int length, int* offset);
 #endif

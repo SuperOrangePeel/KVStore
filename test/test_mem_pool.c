@@ -15,10 +15,10 @@ int format_hset(char *buf, int i) {
     char key[16], val[32];
     // Key: 8 bytes (e.g. "00000001")
     sprintf(key, "%08d", i);
-    // Value: 16 bytes (e.g. "val:000000000001")
+    // Value: 8 bytes (e.g. "00000001")
     sprintf(val, "%08d", i);
     
-    // RESP: $8 for key, $16 for val
+    // RESP: $8 for key, $8 for val
     return sprintf(buf, "*3\r\n$4\r\nHSET\r\n$8\r\n%s\r\n$8\r\n%s\r\n", key, val);
 }
 

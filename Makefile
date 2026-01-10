@@ -1,6 +1,6 @@
 
 CC = gcc
-FLAGS = -I ./NtyCo/core/ -L ./NtyCo/ -lntyco -lpthread -luring -ldl -g -O3
+FLAGS = -I ./NtyCo/core/ -L ./NtyCo/ -lntyco -lpthread -luring -ldl -g -O3 # -ljemalloc
 SRCS = $(wildcard *.c)
 TARGET = kvstore
 SUBDIRS = ./NtyCo/ ./test
@@ -17,6 +17,9 @@ subdirs : $(SUBDIRS)
 
 $(TARGET): $(OBJS) 
 	$(CC) -o $@ $^ $(FLAGS)
+	rm -rf ./test_slave/*
+	cp $(TARGET) ./test_slave/
+	
 
 %.o: %.c
 	$(CC) $(FLAGS) -c $^ -o $@
@@ -28,6 +31,8 @@ clean:
             make -C $$dir clean; \
         fi \
     done
+	rm -rf kvstore.aof
+	rm -rf dump.rdb
 
 
 .PHONY: all clean

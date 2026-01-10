@@ -7,9 +7,17 @@
 #include "kvs_hash.h"
 #include "kvs_rbtree.h"
 
+#include "proactor.h"
+#include "common.h"
+
+#include <errno.h>
+#include <string.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <fcntl.h>
+#include <unistd.h>
+ #include <sys/stat.h>
 
 #if (KVS_PROTOCOL_SELECT == KVS_RESP)
 
@@ -39,14 +47,14 @@ const char *command[] = {
 	"SET", "GET", "DEL", "MOD", "EXIST",
 	"RSET", "RGET", "RDEL", "RMOD", "REXIST",
 	"HSET", "HGET", "HDEL", "HMOD", "HEXIST",
-	"SAVE"
+	"SAVE", "SYNC"
 };
 
 const int command_length[] = {
 	3, 3, 3, 3, 5,
 	4, 4, 4, 4, 6,
 	4, 4, 4, 4, 6,
-	4,
+	4, 4
 };
 
 enum {
@@ -71,23 +79,27 @@ enum {
 	KVS_CMD_HEXIST,
 	//save
 	KVS_CMD_SAVE,
+	//slave sync
+	KVS_SLAVE_SYNC,
 	
 	KVS_CMD_COUNT,
 };
 
 static int kvs_write_cmd[] = {
-	KVS_CMD_SET, KVS_CMD_MOD,
-	KVS_CMD_RSET, KVS_CMD_RMOD,
-	KVS_CMD_HSET, KVS_CMD_HMOD,
+	KVS_CMD_SET,  KVS_CMD_DEL,KVS_CMD_MOD,
+	KVS_CMD_RSET, KVS_CMD_RDEL,KVS_CMD_RMOD,
+	KVS_CMD_HSET, KVS_CMD_HDEL,KVS_CMD_HMOD,
 	-1
 };
 
-enum {
+enum KVS_RESPONSE_CODE {
 	KVS_RESP_OK = 0,
 	KVS_RESP_ERROR,
 	KVS_RESP_EXIST,
 	KVS_RESP_NOT_EXIST,
 	KVS_RESP_VALUE,
+	KVS_RESP_SKIP_SEND,
+	KVS_RESP_UNKNOWN_CMD
 };
 
 
@@ -300,30 +312,38 @@ int kvs_execute_one_command(char **tokens, int count, char *response) {
 }
 #elif(KVS_PROTOCOL_SELECT == KVS_RESP)
 
-int kvs_format_response(int status, char *value, int len_val, char *response) {
+int kvs_format_response(int status, char *value, int len_val, char *response, int rsp_buf_len) {
 	if (response == NULL) return -1;
 
 	int length = 0;
 	switch(status) {
+		// todo : what if rsp_buf_len is not enough ?
 		case KVS_RESP_OK:
-			length = sprintf(response, "+OK\r\n");
+			length = snprintf(response, rsp_buf_len, "+OK\r\n");
 			break;
 		case KVS_RESP_ERROR:
-			length = sprintf(response, "-ERROR\r\n");
+			length = snprintf(response, rsp_buf_len, "-ERROR\r\n");
 			break;
 		case KVS_RESP_EXIST:
-			length = sprintf(response, "+EXIST\r\n");
+			length = snprintf(response, rsp_buf_len, "+EXIST\r\n");
 			break;
 		case KVS_RESP_NOT_EXIST:
-			length = sprintf(response, "+NOT EXIST\r\n");
+			length = snprintf(response, rsp_buf_len, "+NOT EXIST\r\n");
 			break;
 		case KVS_RESP_VALUE:
-			{
-				int r_len1 = sprintf(response, "$%d\r\n", len_val);
+			{	
+				if(value == NULL || len_val <= 0) {
+					length = snprintf(response, rsp_buf_len, "-ERROR\r\n");
+					break;
+				}
+				int r_len1 = snprintf(response, rsp_buf_len, "$%d\r\n", len_val);
 				memcpy(response + r_len1, value, len_val);
-				int r_len2 = sprintf(response + r_len1 + len_val, "\r\n");
+				int r_len2 = snprintf(response + r_len1 + len_val, rsp_buf_len, "\r\n");
 				length = len_val + r_len1 + r_len2;
 			}
+			break;
+		case KVS_RESP_UNKNOWN_CMD:
+			length = snprintf(response, rsp_buf_len, "-ERR unknown command\r\n");
 			break;
 		default:
 			assert(0);
@@ -339,22 +359,25 @@ int _kvs_pers_save_rdb_hash_cb(void* db, kvs_pers_write_rdb_cb callback, void* c
 	return 0;
 }
 
-//char *response 
-int kvs_execute_one_command(kvs_server_t *server, kvs_resp_cmd_t *cmd_p, char **value_out, int *len_val_out) {
+/*
+* @return enum KVS_RESPONSE_CODE
+*/
+int kvs_execute_one_command(struct kvs_conn_s *conn, kvs_resp_cmd_t *cmd_p, char **value_out, int *len_val_out) {
+	struct kvs_server_s *server = conn->server;
 	kvs_array_t *cur_array = server->array;
 	kvs_hash_t *cur_hash = server->hash;
 	kvs_rbtree_t *cur_rbtree = server->rbtree;
 
 	if (cmd_p == NULL) return -1;
 
-	int cmd = KVS_CMD_START;
-	for (cmd = KVS_CMD_START;cmd < KVS_CMD_COUNT;cmd ++) {
-		if(cmd_p->len_cmd != command_length[cmd]) continue;
-		if (memcmp(cmd_p->cmd, command[cmd], cmd_p->len_cmd) == 0) {
-			cmd_p->cmd_type = cmd;
-			break;
-		} 
-	}
+	// int cmd = KVS_CMD_START;
+	// for (cmd = KVS_CMD_START;cmd < KVS_CMD_COUNT;cmd ++) {
+	// 	if(cmd_p->len_cmd != command_length[cmd]) continue;
+	// 	if (memcmp(cmd_p->cmd, command[cmd], cmd_p->len_cmd) == 0) {
+	// 		cmd_p->cmd_type = cmd;
+	// 		break;
+	// 	} 
+	// }
 
 	int ret = 0;
 	char *key = cmd_p->key;
@@ -366,7 +389,7 @@ int kvs_execute_one_command(kvs_server_t *server, kvs_resp_cmd_t *cmd_p, char **
 	char *ret_val = NULL;
 	int ret_val_len = 0;
 
-	switch(cmd) {
+	switch(cmd_p->cmd_type) {
 #if ENABLE_ARRAY
 	case KVS_CMD_SET:
 		  
@@ -540,9 +563,21 @@ int kvs_execute_one_command(kvs_server_t *server, kvs_resp_cmd_t *cmd_p, char **
 		}
 		break;
 	case KVS_CMD_SAVE:
-		ret = kvs_persistence_save_rdb(server->pers_ctx, _kvs_pers_save_rdb_hash_cb, server->hash);
+		ret = kvs_persistence_save_rdb(server->pers_ctx, _kvs_pers_save_rdb_hash_cb, server->hash, KVS_RDB_HASH);
 		if(ret == 0) {
 			return KVS_RESP_OK;
+		} else {
+			return KVS_RESP_ERROR;
+		}
+		break;
+	case KVS_SLAVE_SYNC:
+		conn->slave_info.is_slave = 1;
+		printf("Slave SYNC command received\n");
+		conn->state = CONN_STATE_SLAVE_WAIT_RDB;
+		ret = kvs_persistence_save_rdb(server->pers_ctx, _kvs_pers_save_rdb_hash_cb, server->hash, KVS_RDB_HASH);
+		if(ret == 0) {
+			conn->state = CONN_STATE_SLAVE_SEND_RDB;
+			return KVS_RESP_SKIP_SEND;
 		} else {
 			return KVS_RESP_ERROR;
 		}
@@ -550,34 +585,20 @@ int kvs_execute_one_command(kvs_server_t *server, kvs_resp_cmd_t *cmd_p, char **
 #endif
 
 	default: 
-		assert(0);
+		return KVS_RESP_UNKNOWN_CMD;
+		//assert(0);
 	}
 
 	return KVS_RESP_ERROR;
 }
 
 
-// >= 0
-static inline int kvs_parse_int(char* s, int length, int* offset) {
-    int res = 0;
-    int i = *offset;
-	//printf("i:%d, s[i]:[%.*s]\n", i, 1, s);
-    while (i < length && s[i] >= '0' && s[i] <= '9') {
-        res = res * 10 + (s[i] - '0');
-		//printf("res:%d, num:%d\n", res, (int)(s[i] - '0'));
-        i++;
-    }
-    *offset = i;
-	//printf("res:%d\n", res);
-    return res;
-}
-
-
 /*
 * @return the index of the start of the next command
 */
-int kvs_parse_protocol(kvs_resp_cmd_t *cmd_cur, char* msg, int length, int idx) {
-	if(cmd_cur == NULL || msg == NULL || length <= 0 || idx < 0) return -1;
+int kvs_parse_protocol(kvs_resp_cmd_t *cmd_cur, char* msg, int length/*, int idx*/) {
+	if(cmd_cur == NULL || msg == NULL || length <= 0 /*|| idx < 0*/) return -1;
+	int idx = 0;
 	if(msg[idx] != '*') return -1;
 	cmd_cur->raw_ptr = &msg[idx];
 	int idx_bk = idx;
@@ -610,11 +631,27 @@ int kvs_parse_protocol(kvs_resp_cmd_t *cmd_cur, char* msg, int length, int idx) 
 		if(0 == i) cmd_cur->cmd = str, cmd_cur->len_cmd = len;
 		else if(1 == i) cmd_cur->key = str, cmd_cur->len_key = len;
 		else if(2 == i) cmd_cur->val = str, cmd_cur->len_val = len;
-		else printf("%s:%d error\n", __FILE__, __LINE__);
+		else {
+			printf("%s:%d error\n", __FILE__, __LINE__);
+		}
 	}
 	
 	if(i != len_arr) return -1;
 	cmd_cur->raw_len = idx-idx_bk;
+
+	int cmd = KVS_CMD_START;
+	for (cmd = KVS_CMD_START;cmd < KVS_CMD_COUNT;cmd ++) {
+		if(cmd_cur->len_cmd != command_length[cmd]) continue;
+		if (memcmp(cmd_cur->cmd, command[cmd], cmd_cur->len_cmd) == 0) {
+			cmd_cur->cmd_type = cmd;
+			break;
+		} 
+	}
+	if(cmd == KVS_CMD_COUNT) {
+		// unknown command
+		cmd_cur->cmd_type = -1;
+	}
+
 	return idx;
 
 }
@@ -624,46 +661,54 @@ int kvs_parse_protocol(kvs_resp_cmd_t *cmd_cur, char* msg, int length, int idx) 
 /*
  * @param length: length of msg
  * @param idx: start index of msg
- * @return number of commands parsed
+ * @return the total parsed length
  */
-int kvs_get_multi_cmds(kvs_resp_cmd_t *cmds, int max_cmd_num, char* msg, int length, int *idx) {
+int kvs_get_multi_cmds(kvs_resp_cmd_t *cmds, int max_cmd_num, char* msg, int length, int *parsed_cmd_count) {
 	int cmd_count = 0;
-	int next_cmd = 0;
+	int cmd_length = 0;
+	int idx = 0;
 	while(1) {
 		kvs_resp_cmd_t *cmd_cur = &cmds[cmd_count];
-		next_cmd = kvs_parse_protocol(cmd_cur, msg, length, *idx);
-		if(next_cmd == -1) {
-			if(*idx != length)
-				printf("%s:%d command parser failed, current idx: %d, length: %d\n", __FILE__, __LINE__, *idx, length);
+		cmd_length = kvs_parse_protocol(cmd_cur, msg + idx, length - idx);
+		if(cmd_length == -1) {
+			// if(idx != length)
+			// 	printf("%s:%d command parser failed, remaining %d bytes\n", __FILE__, __LINE__, length - idx);
 			break;
-		}
-		*idx = next_cmd;
+		} 
+		idx += cmd_length;
 		cmd_count ++ ;
 		if(cmd_count >= max_cmd_num) break;
 	}
-	return cmd_count;
+	*parsed_cmd_count = cmd_count;
+	return idx;
 }
 
 
 /*
- *@return: -1 parser failed
+ *@return enum KVS_RESPONSE_CODE
  */
 int kvs_handler_process_raw_buffer(struct kvs_server_s* server, char* buf, int len, int *parsed_length)
 {
 	kvs_resp_cmd_t cmd = {0};
 	// printf("before next_cmd\n");
-	int next_cmd = kvs_parse_protocol(&cmd, buf, len, *parsed_length);
+	int next_cmd = kvs_parse_protocol(&cmd, buf, len);
 	//printf("next_cmd: %d\n", next_cmd);
 	if(next_cmd == -1) {
 		return -1;
 	}
 	*parsed_length = next_cmd;
+	struct kvs_conn_s dummy_conn;
+	memset(&dummy_conn, 0, sizeof(struct kvs_conn_s));
+	dummy_conn.server = server;
+	dummy_conn.fd = -1; // not used
+
 	char *value_dummy;
 	int len_dummy;
-	return kvs_execute_one_command(server, &cmd, &value_dummy, &len_dummy);
+	return kvs_execute_one_command(&dummy_conn, &cmd, &value_dummy, &len_dummy);
 }
 
 
+// check if the command is a write command
 static inline int kvs_is_write_cmd(int cmd) {
 	int i = 0;
 	while(kvs_write_cmd[i] != -1) {
@@ -675,7 +720,225 @@ static inline int kvs_is_write_cmd(int cmd) {
 	return 0;
 }
 
-static int total_command = 0;
+int kvs_handler_on_response(struct kvs_conn_s *conn) {
+	if(conn == NULL) return -1;
+	int state = conn->state;
+	int pret = 0;
+
+	size_t *rdb_offset = &conn->slave_info.rdb_offset;
+	size_t *repl_backlog_offset = &conn->slave_info.repl_backlog_offset;
+
+	switch(state){
+		case CONN_STATE_CMD:
+			set_event_recv(conn->server->uring, conn->fd, 
+				conn->r_buffer + conn->r_idx,
+				conn->r_buf_sz - conn->r_idx, 0);
+			break;
+		// case CONN_STATE_SLAVE_WAIT_RDB:
+		// 	break;
+		case CONN_STATE_SLAVE_SEND_RDB:
+			pret = pread(conn->server->master.rdb_fd, conn->response, conn->w_buf_sz, *rdb_offset);
+			if(pret < 0) {
+				printf("%s:%d pread rdb file failed: %s\n", __FILE__, __LINE__, strerror(errno));
+				assert(0);
+			} else if(pret == 0) {
+				// finish sending rdb file
+				printf("%s:%d finish sending rdb file to slave\n", __FILE__, __LINE__);
+				// rdb file descriptor will be closed when next rdb save
+				// close(conn->server->master.rdb_fd);
+				// conn->server->master.rdb_fd = -1;
+				conn->state = CONN_STATE_SLAVE_SEND_REPL;
+				if(conn->server->master.repl_backlog != NULL && conn->server->master.repl_backlog_idx > 0) {
+					// send replication backlog data
+					printf("%s:%d send replication backlog data to slave, size: %zu\n", __FILE__, __LINE__, conn->server->master.repl_backlog_idx);
+					*repl_backlog_offset = 0;
+					if(conn->server->master.repl_backlog_idx <= conn->w_buf_sz) {
+						// all backlog data can be sent in one go
+						memcpy(conn->response, conn->server->master.repl_backlog, conn->server->master.repl_backlog_idx);
+						conn->w_idx = conn->server->master.repl_backlog_idx;
+						*repl_backlog_offset = conn->server->master.repl_backlog_idx;
+					} else {
+						// only part of backlog data can be sent
+						memcpy(conn->response, conn->server->master.repl_backlog, conn->w_buf_sz);
+						conn->w_idx = conn->w_buf_sz;
+						*repl_backlog_offset += conn->w_buf_sz;
+					}
+				} else {
+					// no backlog data, set to online
+					printf("%s:%d no backlog data, set slave to online\n", __FILE__, __LINE__);
+					conn->state = CONN_STATE_SLAVE_ONLINE;
+
+					// add slave fd to server's slave fds list, so that master can send replication data to slaves
+					if(conn->server->master.slave_count >= KVS_MAX_SLAVES) {
+						printf("%s:%d exceed max slave count: %d\n", __FILE__, __LINE__, KVS_MAX_SLAVES);
+						// todo: close connection 
+						assert(0);
+					}
+					conn->server->master.slaves_fds[conn->server->master.slave_count] = conn->fd;
+					conn->slave_info.slave_idx = conn->server->master.slave_count;
+					conn->server->master.slave_count ++ ;
+					conn->slave_info.is_slave = 1;
+
+					set_event_recv(conn->server->uring, conn->fd, conn->r_buffer + conn->r_idx, conn->r_buf_sz - conn->r_idx, 0);
+					break;
+				}
+			} else {
+				*rdb_offset += pret;
+				conn->w_idx = pret;
+			}
+			set_event_send(conn->server->uring, conn->fd, conn->response, conn->w_idx, 0);
+			break;
+		case CONN_STATE_SLAVE_SEND_REPL:
+			if(*repl_backlog_offset < conn->server->master.repl_backlog_idx) {
+				size_t remaining = conn->server->master.repl_backlog_idx - *repl_backlog_offset;
+				if(remaining <= conn->w_buf_sz) {
+					// all remaining backlog data can be sent in one go
+					memcpy(conn->response, conn->server->master.repl_backlog + *repl_backlog_offset, remaining);
+					conn->w_idx = remaining;
+					*repl_backlog_offset += remaining;
+				} else {
+					// only part of remaining backlog data can be sent
+					memcpy(conn->response, conn->server->master.repl_backlog + *repl_backlog_offset, conn->w_buf_sz);
+					conn->w_idx = conn->w_buf_sz;
+					*repl_backlog_offset += conn->w_buf_sz;
+				}
+				set_event_send(conn->server->uring, conn->fd,  conn->response, conn->w_idx, 0);
+			} else {
+				// finish sending replication backlog data
+				printf("%s:%d finish sending replication backlog data to slave\n", __FILE__, __LINE__);
+				conn->state = CONN_STATE_SLAVE_ONLINE;
+
+				// add slave fd to server's slave fds list, so that master can send replication data to slaves
+				if(conn->server->master.slave_count >= KVS_MAX_SLAVES) {
+					printf("%s:%d exceed max slave count: %d\n", __FILE__, __LINE__, KVS_MAX_SLAVES);
+					// todo: close connection 
+					assert(0);
+				}
+				conn->server->master.slaves_fds[conn->server->master.slave_count] = conn->fd;
+				conn->slave_info.slave_idx = conn->server->master.slave_count;
+				conn->server->master.slave_count ++ ;
+				conn->slave_info.is_slave = 1;
+
+				set_event_recv(conn->server->uring, conn->fd, conn->r_buffer + conn->r_idx, conn->r_buf_sz - conn->r_idx, 0);
+			}
+			break;
+		case CONN_STATE_SLAVE_ONLINE:
+			set_event_recv(conn->server->uring, conn->fd, conn->r_buffer + conn->r_idx, conn->r_buf_sz - conn->r_idx, 0);
+			break;
+		default:
+			printf("%s:%d invalid connection state: %d\n", __FILE__, __LINE__, state);
+			assert(0);
+	}
+
+	return 0;
+	
+}
+
+static inline int _kvs_handler_init_conn(struct kvs_conn_s *conn, int client_fd, struct kvs_server_s *server) {
+	if(conn == NULL || client_fd < 0) return -1;
+	// memory leak if r_buffer and response are not NULL !!! 
+	// do not memset to 0 the whole struct, or the existing buffers will be lost
+	// memset(conn, 0, sizeof(struct kvs_conn_s));
+	conn->fd = client_fd;
+	conn->server = server;
+	// may reuse buffers
+	if(conn->r_buffer == NULL && conn->r_buf_sz == 0) {
+		conn->r_buffer = (char*)kvs_malloc(BUFFER_LENGTH);
+		conn->r_buf_sz = BUFFER_LENGTH;
+	}
+	assert(conn->r_buf_sz == BUFFER_LENGTH);
+	memset(conn->r_buffer, 0, conn->r_buf_sz);
+	conn->r_idx = 0;
+	if(conn->response == NULL) {
+		conn->response = (char*)kvs_malloc(BUFFER_LENGTH);
+		conn->w_buf_sz = BUFFER_LENGTH;
+	}
+	assert(conn->w_buf_sz == BUFFER_LENGTH);
+	memset(conn->response, 0, conn->w_buf_sz);
+	conn->w_idx = 0;
+	//conn->state = 0;
+	conn->state = CONN_STATE_CMD;
+	return 0;
+}
+
+int kvs_handler_register_master(struct kvs_conn_s *conn, int client_fd, struct kvs_server_s *server) {
+	if(conn == NULL || client_fd < 0) return -1;
+
+	_kvs_handler_init_conn(conn, client_fd, server);
+	conn->master_info.is_master = 1;
+	conn->slave_info.is_slave = 0;
+
+	// add to uring event loop
+	set_event_recv(server->uring, client_fd, conn->r_buffer, conn->r_buf_sz, 0);
+	return 0;
+}
+
+int kvs_handler_register_client(struct kvs_conn_s *conn, int client_fd, struct kvs_server_s *server) {
+	if(conn == NULL || client_fd < 0) return -1;
+
+	_kvs_handler_init_conn(conn, client_fd, server);
+	conn->master_info.is_master = 0;
+	conn->slave_info.is_slave = 0;
+
+	// add to uring event loop
+	set_event_recv(server->uring, client_fd, conn->r_buffer, conn->r_buf_sz, 0);
+	return 0;
+}
+
+
+int kvs_handler_on_accept(struct kvs_server_s *server, int client_fd) {
+	if(server == NULL || client_fd <= 0) return -1;
+
+	struct kvs_conn_s *conn = &server->conns[client_fd];
+	if(conn == NULL) {
+		printf("%s:%d create connection failed\n", __FILE__, __LINE__);
+		return -1;
+	}
+
+	kvs_handler_register_client(conn, client_fd, server);
+
+	return 0;
+}
+
+int static inline _kvs_handler_init_slave_info(struct kvs_conn_s *conn) {
+	
+	// lazy allocate replication backlog buffer
+	if(conn->server->master.repl_backlog == NULL) {
+		// allocate replication backlog buffer
+		printf("%s:%d allocate repl backlog buffer for slave\n", __FILE__, __LINE__);
+		conn->server->master.repl_backlog = (char*)kvs_malloc(KVS_REPL_BACKLOG_SIZE);
+		conn->server->master.repl_backlog_size = KVS_REPL_BACKLOG_SIZE;
+		conn->server->master.repl_backlog_idx = 0;
+	}
+
+	// open rdb file
+	if(conn->server->master.rdb_fd <= 0) {
+		// if rdb file is not opened, open it
+		conn->server->master.rdb_fd = open(conn->server->pers_ctx->rdb_filename, O_RDONLY);
+		if(conn->server->master.rdb_fd < 0) {
+			printf("%s:%d open rdb file failed\n", __FILE__, __LINE__);
+			assert(0);
+		}
+	}
+	
+	// get rdb file size
+	struct stat rdb_stat;
+	if(-1 == fstat(conn->server->master.rdb_fd, &rdb_stat) ) {
+		printf("%s:%d fstat rdb file failed: %s\n", __FILE__, __LINE__, strerror(errno));
+		assert(0);
+	}
+	int rdb_size = rdb_stat.st_size;
+	if(rdb_size <= 0) {
+		//todo: empty rdb file ?
+		printf("%s:%d rdb file size is 0\n", __FILE__, __LINE__);
+		assert(0);
+	}
+	// reset rdb offset, ready to send rdb file from the beginning
+	conn->slave_info.rdb_offset = 0;
+	conn->server->pers_ctx->rdb_size = rdb_size;
+	return 0;
+}
+
 /*
  * msg: request message
  * length: length of request message
@@ -683,66 +946,120 @@ static int total_command = 0;
  * length_r: length fo response
  * @return : length of processed message
  */
-int kvs_protocol(struct kvs_conn_s *conn)
-// int kvs_protocol(char *msg, int length, char *response, int rsp_buf_len, int* length_r) 
-{  
+int kvs_handler_on_msg(struct kvs_conn_s *conn) {  
+	// todo: state machine for slave
 	// todo: response_len avoid buffer overflow
 	// if (msg == NULL || length <= 0 || response == NULL || length_r == NULL) return -1;
 	if(conn == NULL) return -1;
 	char *msg = conn->r_buffer;
-	int length = conn->r_idx;
+	int length = conn->r_idx;// can not change r_idx in this function
 	char *response = conn->response;
-	int rsp_buf_len = conn->w_total;
-	int* length_r = &conn->w_idx;
+	int rsp_buf_len = conn->w_buf_sz;
+	int* length_r = &conn->w_idx; // w_idx should be the length of response after processing
+	int is_write_cmd = 0;
 
 	
 	//printf("Debug: length_r pointer address = %p\n", (void*)length_r);
 #if (KVS_PROTOCOL_SELECT == KVS_RESP)
-	int idx = 0;
-	int cmd_count = kvs_get_multi_cmds(kvs_resp_cmds, KVS_RESP_CMD_MAX, msg, length, &idx);
+	int cmd_count = 0;
+	int parsed_length = kvs_get_multi_cmds(kvs_resp_cmds, KVS_RESP_CMD_MAX, msg, length, &cmd_count);
+	// if(parsed_length <= 0 || cmd_count <= 0) {
+	// 	printf("%s:%d parse commands failed\n", __FILE__, __LINE__);
+	// 	return -1;
+	// }
+	// record the total length of response in response buffer in the following for loop
+	//int *length_r = 0;
 
-	int r_len_total = 0;
-	//printf("Command count: %d\n", cmd_count);
-	int ok_count = 0;
-	int error_count = 0;
-	// gettimeofday(&kvs_before_time, NULL);
-	// struct timeval kvs_after_time;
-
+	// process each command
 	for (int i = 0; i < cmd_count; i++) {
-		// printf("Command %d:\n", i);
-    	// printf("  Cmd: %.*s (len: %d)\n", kvs_resp_cmds[i].len_cmd, kvs_resp_cmds[i].cmd, kvs_resp_cmds[i].len_cmd);
-    	// printf("  Key: %.*s (len: %d)\n", kvs_resp_cmds[i].len_key, kvs_resp_cmds[i].key, kvs_resp_cmds[i].len_key);
-    	// printf("  Val: %.*s (len: %d)\n", kvs_resp_cmds[i].len_val, kvs_resp_cmds[i].val, kvs_resp_cmds[i].len_val);
+		is_write_cmd = kvs_is_write_cmd(kvs_resp_cmds[i].cmd_type);
+
+		if(conn->server->role == KVS_SERVER_ROLE_SLAVE && is_write_cmd && !conn->master_info.is_master) {
+			// slave server should not accept write commands
+			printf("%s:%d slave server reject write command\n", __FILE__, __LINE__);
+			printf("command: [%.*s], cmd_type: %d, is_write_cmd: %d\n", kvs_resp_cmds[i].len_cmd, kvs_resp_cmds[i].cmd, kvs_resp_cmds[i].cmd_type, is_write_cmd);
+			printf("connection fd: %d, is_master: %d\n", conn->fd, conn->master_info.is_master);
+			*length_r += kvs_format_response(KVS_RESP_ERROR, NULL, 0, response + *length_r, rsp_buf_len - *length_r);
+			continue;
+		}
+
 		char *value_out = NULL;
 		int len_val_out = 0;
-		int status_num = kvs_execute_one_command(conn->server, &kvs_resp_cmds[i], &value_out, &len_val_out);
-		int r_len = kvs_format_response(status_num, value_out, len_val_out, response + r_len_total);
-		if(r_len_total + r_len > rsp_buf_len) {
+		int status_num = kvs_execute_one_command(conn, &kvs_resp_cmds[i], &value_out, &len_val_out);
+		if(status_num < 0) {
+			printf("%s:%d execute command failed\n", __FILE__, __LINE__);
+			assert(0);
+		}
+
+		// special handling for SYNC command
+		if(status_num == KVS_RESP_SKIP_SEND) {
+			conn->state = CONN_STATE_SLAVE_SEND_RDB;
+			_kvs_handler_init_slave_info(conn);
+			// start to format RDB file sending response
+			*length_r += snprintf(conn->response, conn->w_buf_sz, "$%ld\r\n", conn->server->pers_ctx->rdb_size);
+			assert(conn->slave_info.rdb_offset == 0);
+			int p_ret = pread(conn->server->master.rdb_fd, conn->response + *length_r, conn->w_buf_sz - *length_r, conn->slave_info.rdb_offset);
+			if(p_ret < 0) {
+				printf("%s:%d pread rdb file failed: %s\n", __FILE__, __LINE__, strerror(errno));
+				assert(0);
+			} else if(p_ret == 0) {
+				printf("%s:%d pread rdb file return 0\n", __FILE__, __LINE__);
+				// there is no data in rdb file to read ??? 
+				assert(0);
+			} else {
+				conn->slave_info.rdb_offset += p_ret;
+				*length_r += p_ret;
+			}
+			// set to send RDB file
+			
+			break;
+		}
+
+		// format response
+		int r_len = kvs_format_response(status_num, value_out, len_val_out, response + *length_r, rsp_buf_len - *length_r);
+		if(*length_r + r_len > rsp_buf_len) {
 			// overflow
 			printf("%s:%d response buffer overflow\n", __FILE__, __LINE__);
 			assert(0);
 		}
-		if(status_num == KVS_RESP_OK) ok_count ++;
-		else {
-			//printf("status num:%d\n", status_num);
-			error_count ++;
-		}
-#if KVS_PERSISTENCE
-		if(status_num == KVS_RESP_OK && kvs_is_write_cmd(kvs_resp_cmds[i].cmd_type)) {
-			kvs_persistence_write_aof(conn->server->pers_ctx, kvs_resp_cmds[i].raw_ptr, kvs_resp_cmds[i].raw_len);
-		}
-#endif 
-		r_len_total += r_len;
+		*length_r += r_len;
 
-		
+		// persistence for write commands
+#if KVS_PERSISTENCE
+		if(status_num == KVS_RESP_OK && is_write_cmd) {
+			kvs_persistence_write_aof(conn->server->pers_ctx, kvs_resp_cmds[i].raw_ptr, kvs_resp_cmds[i].raw_len);
+			
+			if(KVS_SERVER_ROLE_MASTER == conn->server->role) {
+				int slave_count = conn->server->master.slave_count;
+				for(int s_idx = 0; s_idx < slave_count; s_idx ++) {
+					int slave_fd = conn->server->master.slaves_fds[s_idx];
+					struct kvs_conn_s *slave_conn = &conn->server->conns[slave_fd];
+					if(slave_conn == NULL) {
+						printf("%s:%d get slave connection failed for fd: %d\n", __FILE__, __LINE__, slave_fd);
+						continue;
+					}
+					if(slave_conn->w_idx + kvs_resp_cmds[i].raw_len > slave_conn->w_buf_sz) {
+						// overflow
+						printf("%s:%d slave response buffer overflow for fd: %d\n", __FILE__, __LINE__, slave_fd);
+						continue;
+					}
+					assert(slave_conn->w_idx + kvs_resp_cmds[i].raw_len <= slave_conn->w_buf_sz);
+					memcpy(slave_conn->response + slave_conn->w_idx, kvs_resp_cmds[i].raw_ptr, kvs_resp_cmds[i].raw_len);
+					slave_conn->w_idx += kvs_resp_cmds[i].raw_len;
+					set_event_send(slave_conn->server->uring, slave_conn->fd, slave_conn->response, slave_conn->w_idx, 0);
+				}
+			}
+			
+		}
+#endif 		
 	}
-	//total_command += ok_count;
-	//printf("total_command: %d Batch stats: Parsed=%d, Success=%d, Failed=%d\n", total_command, cmd_count, ok_count, error_count);
+
+
+	// set to send response
+	set_event_send(conn->server->uring, conn->fd, conn->response, conn->w_idx, 0);
+
 	
-	*length_r = r_len_total;
-	
-	// idx is the start of a command
-	return idx; // length of processed message
+	return parsed_length; // length of processed message
 
 #if 0
 	if(test_buffer == 0) {
@@ -784,3 +1101,45 @@ int kvs_protocol(struct kvs_conn_s *conn)
 
 
 #endif
+
+int kvs_handler_on_close(struct kvs_conn_s *conn) {
+	if(conn == NULL) return -1;
+
+	if(conn->master_info.is_master) {
+		assert(0 == conn->slave_info.is_slave);
+		printf("%s:%d master connection closed, fd: %d\n", __FILE__, __LINE__, conn->fd);
+		// todo: master connection closed
+		assert(0);
+		return -1;
+	}
+
+	if(conn->slave_info.is_slave) {
+		assert(0 == conn->master_info.is_master);
+		printf("%s:%d slave connection closed, fd: %d\n", __FILE__, __LINE__, conn->fd);
+		// remove from server's slave fds list
+		assert(conn->slave_info.slave_idx >=0 && conn->slave_info.slave_idx < conn->server->master.slave_count);
+		int slave_idx = conn->slave_info.slave_idx;
+		int last_slave_idx = conn->server->master.slave_count - 1;
+		if(slave_idx < last_slave_idx) {
+			// move last slave to this position
+			int last_slave_fd = conn->server->master.slaves_fds[last_slave_idx];
+			conn->server->master.slaves_fds[slave_idx] = last_slave_fd;
+			conn->server->conns[last_slave_fd].slave_info.slave_idx = slave_idx;
+			conn->server->master.slaves_fds[last_slave_idx] = -1;
+			conn->server->master.slave_count -- ;
+		} else if(slave_idx == last_slave_idx) {
+			conn->server->master.slaves_fds[slave_idx] = -1;
+			conn->server->master.slave_count -- ;
+		} else {
+			assert(0);
+		}
+			
+	}
+
+	conn->fd = -1;
+	conn->r_idx = 0;
+	conn->w_idx = 0;
+
+
+	return 0;
+}

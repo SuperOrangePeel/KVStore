@@ -1,5 +1,4 @@
 #include "kvs_persistence.h"
-#include "kvs_hash.h"
 #include "common.h"
 
 #include <bits/types/struct_iovec.h>
@@ -12,13 +11,6 @@
 #include <sys/uio.h>
 #include <string.h>
 
-enum {
-	KVS_RDB_START = 0,
-	KVS_RDB_ARRAY,
-	KVS_RDB_RBTREE,
-	KVS_RDB_HASH,
-	KVS_RDB_END
-};
 
 kvs_pers_context_t kvs_aof_ctx = {0}; // global context
 
@@ -51,7 +43,6 @@ kvs_pers_context_t *kvs_persistence_create(char* aof_filename, char* rdb_filenam
     }
     strncpy(ctx->rdb_filename, rdb_filename, strlen(rdb_filename) + 1);
     ctx->rdb_fd = NULL;
-    ctx->rdb_offset = 0;
     ctx->rdb_size = 0;
 
     return ctx;
@@ -119,8 +110,8 @@ int kvs_persistence_write_aof(kvs_pers_context_t *ctx, char* data, size_t data_l
 * @param buffer: suggested size at least 4096 bytes or 64k bytes
 * @return number of bytes read, -1 on error
 */
-int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_pest_get_exe_one_cmd func, void* arg) {
-    if(!aof_ctx || !func) return -1;
+int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_aof_data_parser_cb data_parser, void* arg) {
+    if(!aof_ctx || !data_parser) return -1;
 
     int aof_fd = open(aof_ctx->aof_filename, O_RDWR);
     if (aof_fd == -1) return -1;
@@ -145,15 +136,15 @@ int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_pest_get_exe_one_c
         
         // 2. 内部循环解析：只要缓冲区里还有数据
         while (1) {
-            int cmd_len = 0; // 这是一个输出参数，由解析器告诉我们这条指令有多长
+            //int cmd_len = 0; // 这是一个输出参数，由解析器告诉我们这条指令有多长
             
             // 注意：这里传入解析器的必须是起始位置和当前剩余的总长度
-            int ret = func(f_buf + p_idx, total_in_buf - p_idx, &cmd_len, arg);
+            int ret = data_parser(f_buf + p_idx, total_in_buf - p_idx, arg);
 
             if (ret >= 0) { 
                 // 解析并执行成功
-                p_idx += cmd_len;
-                total_valid_file_pos += cmd_len;
+                p_idx += ret;
+                total_valid_file_pos += ret;
             } else {
                 // ret < 0 说明数据不完整（半条指令）或者格式错误
                 break; 
@@ -209,7 +200,7 @@ void _rdb_callback(char *key, int len_key, char *value, int len_val, void* arg) 
 
 
 
-int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_pers_rdb_cb func, void* db) {
+int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_pers_rdb_cb func, void* db, int db_type) {
     if(ctx->rdb_fd != NULL) {
         fclose(ctx->rdb_fd);
         ctx->rdb_fd = NULL;
@@ -218,7 +209,7 @@ int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_pers_rdb_cb func, void
     FILE* fp = ctx->rdb_fd;
     kvs_rdb_callback_arg_t arg;
     arg.fp = fp;
-    arg.data_type = KVS_RDB_HASH;
+    arg.data_type = db_type;
     if(fp == NULL) {
         return -1;
     }
@@ -235,49 +226,37 @@ int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_pers_rdb_cb func, void
 
 /*
  *@return 0 success -1 error -2 format error
-//  */
-// int kvs_persistence_load_rdb(kvs_pers_context_t *ctx) {
-//     if(ctx->rdb_filename == NULL) {
-//         return -1;        
-//     }
-//     if(ctx->rdb_fd == NULL) {
-//         ctx->rdb_fd = fopen(ctx->rdb_filename, "rb");
-//     }
-//     FILE* fp = ctx->rdb_fd;
-//     int data_type = 0;
-//     while(fread(&data_type, sizeof(char), 1, fp) == 1) {
-//         int len_key = 0;
-//         if(fread(&len_key, sizeof(int), 1, fp) != 1) {
-//             return -2;
-//         }
-//         char* key = (char*)kvs_malloc(len_key);
-//         if(fread(key, sizeof(char), len_key, fp) != len_key) {
-//             return -2;
-//         }
-//         int len_val = 0;
-//         if(fread(&len_val, sizeof(int), 1, fp) != 1) {
-//             return -2;
-//         }
-//         char* val = (char*)kvs_malloc(len_val);
-//         if(fread(val, sizeof(char), len_val, fp) != len_val) {
-//             return -2;
-//         }
-//         switch(data_type) {
-//             case KVS_RDB_HASH:
-//                 kvs_hash_resp_set(&global_hash, key, len_key, val, len_val);
-//                 break;
-//             case KVS_RDB_ARRAY:
-//                 // kvs_array_resp_set(&global_array, key, len_key, val, len_val);
-//                 break;
-//             case KVS_RDB_RBTREE:
-//                 // kvs_rbtree_resp_set(&global_rbtree, key, len_key, val, len_val);
-//                 break;
-//             default:
-//                 exit(-1);
-//         }
-//     }
-//     return 0;
-// }
+  */
+int kvs_persistence_load_rdb(kvs_pers_context_t *ctx, kvs_rdb_data_setter data_setter, void* arg) {
+    if(ctx->rdb_filename == NULL) {
+        return -1;        
+    }
+    if(ctx->rdb_fd == NULL) {
+        ctx->rdb_fd = fopen(ctx->rdb_filename, "rb");
+    }
+    FILE* fp = ctx->rdb_fd;
+    int data_type = 0;
+    while(fread(&data_type, sizeof(char), 1, fp) == 1) {
+        int len_key = 0;
+        if(fread(&len_key, sizeof(int), 1, fp) != 1) {
+            return -2;
+        }
+        char* key = (char*)kvs_malloc(len_key);
+        if(fread(key, sizeof(char), len_key, fp) != len_key) {
+            return -2;
+        }
+        int len_val = 0;
+        if(fread(&len_val, sizeof(int), 1, fp) != 1) {
+            return -2;
+        }
+        char* val = (char*)kvs_malloc(len_val);
+        if(fread(val, sizeof(char), len_val, fp) != len_val) {
+            return -2;
+        }
+        data_setter(data_type, key, len_key, val, len_val, arg);
+    }
+    return 0;
+}
 
 // int kvs_array_persistence_full(kvs_array_t *inst, char* filename) {
 //     if(inst == NULL || filename == NULL) {

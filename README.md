@@ -18,4 +18,79 @@
 ![image](https://disk.0voice.com/p/py)
 
 
+### proactor
 
+用户需要定义
+```c
+struct kvs_conn_s;
+struct kvs_server_s {
+    int (*on_accept)(struct kvs_server_s *server, int connfd);
+    int (*on_msg)(struct kvs_conn_s *conn);
+    int (*on_send)(struct kvs_conn_s *conn);
+    struct kvs_conn_s *conns;
+    int port; // 用户填写想要监听的端口
+    int server_fd; // 框架自动初始化
+    struct io_uring *uring; // 框架自动初始化
+
+    // 用户自定义参数..
+}
+
+struct kvs_conn_s {
+    // 用户自定义参数..
+};
+```
+提供接口
+```c
+int kvs_proactor_start(struct kvs_server_s *server);
+int set_event_send(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags);
+int set_event_recv(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags);
+```
+
+用法
+```c
+struct kvs_server_s server;
+memset(&server, 0, sizeof(struct kvs_server_s))
+server.on_accept = on_accept;
+server.on_msg = on_msg;
+server.on_send = on_send;
+server.conns = (struct kvs_conn_s*)malloc(sizeof(struct kvs_conn_s) * CONN_MAX_SIZE);
+server.port = 9527;
+kvs_proactor_start(&server);
+```
+
+### 性能测试
+```shell
+sudo perf record  -p 681498 -g -- sleep 10
+./test/test_aof_hash 127.0.0.1 2000 1 50000000
+```
+result
+```shell
++   27.86%    14.08%  kvstore  kvstore            [.] kvs_hash_resp_set                                           
++   11.80%    11.77%  kvstore  [kernel.kallsyms]  [k] __wake_up    
+
+
+--- HSET Results ---
+Total Time:     2.526 seconds
+Success Count:  5000000
+Actual QPS:     1979670.37
+--------------------
+```
+
+### 内存池性能对比
+如果用posix_memaligan分配内存的话，一定不要4K对齐，这玩意分配内存之前要几个byte的空间存这次分配内存的大小信息等等，
+要是4K对齐的话，第一次分配可能问题不大，因为此时堆指针还没4k对齐，下一次分配时那就炸了，
+因为此刻堆指针是4K对齐的，然后这玩意又需要存一点信息，那就不得不用掉8K的物理内存，
+前面一个4K的物理内存后8或16个字节存信息，后面的4K才是给用户的。。我说为什么当时jemalloc的物理内存占用比我小一半。。
+原来是我每次分配4K都用掉了8K。。
+
+```shell
+key:11bytes value:21bytes  500w HSET
+malloc      | 1861238.70 qps | 618M VIRT | 543M RES
+kvs_mempool | 1990716.89 qps | 467M VIRT | 392M RES
+jemalloc    | 1949935.79 qps | 509M VIRT | 399M RES
+
+key:8bytes value:8bytes    500w HSET
+malloc      | 2103246.70 qps | 618M VIRT | 543M RES
+kvs_mempool | 2124817.74 qps | 314M VIRT | 239M RES
+jemalloc    | 2063489.44 qps | 335M VIRT | 244M RES
+```

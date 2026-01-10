@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdio.h>
 
 
 
@@ -94,10 +95,25 @@ static inline int _kvs_mp_get_slot_index(size_t size) {
     return shift - KVS_MP_MIN_SHIFT;
 }
 
+// static int eight_bytes_num = 0;
+// static int thirtytwo_bytes_num = 0;
+
 void* kvs_mempool_alloc(kvs_mp_pool_t *pool, size_t size) {
     if(size > KVS_MP_MAX_ALLOC_FROM_POOL) {
         return malloc(size);
     }
+    // if(size <= 8) {
+    //     eight_bytes_num ++;
+    //     if(eight_bytes_num % 1000000 == 0) {
+    //         printf("allocated %d blocks of 8 bytes from mempool\n", eight_bytes_num);
+    //     }
+    // }
+    // if(size == 32) {
+    //     thirtytwo_bytes_num ++;
+    //     if(thirtytwo_bytes_num % 1000000 == 0) {
+    //         printf("allocated %d blocks of 32 bytes from mempool\n", thirtytwo_bytes_num);
+    //     }
+    // }
     int cls_idx = _kvs_mp_get_slot_index(size);
 
     void* head = pool->heads[cls_idx];
@@ -106,8 +122,12 @@ void* kvs_mempool_alloc(kvs_mp_pool_t *pool, size_t size) {
         return head;
     } else {
         void* p = NULL;
-        int ret = posix_memalign(&p, KVS_MP_PAGE_SIZE, KVS_MP_PAGE_SIZE);
-        if(ret != 0 || p == NULL) {
+        // int ret = posix_memalign(&p, KVS_MP_PAGE_SIZE, KVS_MP_PAGE_SIZE);
+        // if(ret != 0 || p == NULL) {
+        //     return NULL;
+        // }
+        p = malloc(KVS_MP_PAGE_SIZE);
+        if(p == NULL) {
             return NULL;
         }
         //memset(p, 0, KVS_MP_PAGE_SIZE);

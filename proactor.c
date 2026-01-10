@@ -1,6 +1,5 @@
 #include "proactor.h"
 #include "kvs_server.h"
-#include "common.h"
 
 
 #include <stdio.h>
@@ -8,13 +7,14 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <unistd.h>
+#include <assert.h>
 
 
 #define EVENT_ACCEPT   	0
 #define EVENT_READ		1
 #define EVENT_WRITE		2
 
-#define KVS_CONNS_INST(fd) (fd - 3)
+// #define KVS_CONNS_INST(fd) (fd - 3)
 
 struct conn_info {
 	int fd;
@@ -42,8 +42,7 @@ int p_init_server(unsigned short port) {
 }
 
 
-int set_event_recv(struct io_uring *ring, int sockfd,
-				      void *buf, size_t len, int flags) {
+int set_event_recv(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags) {
 
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 
@@ -58,8 +57,7 @@ int set_event_recv(struct io_uring *ring, int sockfd,
 }
 
 
-int set_event_send(struct io_uring *ring, int sockfd,
-				      void *buf, size_t len, int flags) {
+int set_event_send(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags) {
 
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 
@@ -91,36 +89,45 @@ int set_event_accept(struct io_uring *ring, int sockfd, struct sockaddr *addr,
 }
 
 
-typedef int (*msg_handler)(struct kvs_conn_s *conn);
-static msg_handler kvs_handler;
+// typedef int (*msg_handler)(struct kvs_conn_s *conn);
+// static msg_handler kvs_handler;
 
-#define CONNECT_NUM_MAX 12
-
-
+//#define CONNECT_NUM_MAX 12
 
 // kvs_conn_t kvs_conns[CONNECT_NUM_MAX];
 
-int kvs_init_conn(struct kvs_conn_s *conn, int connfd, struct kvs_server_s *server) {
-	if(conn == NULL || connfd < 0) return -1;
-	conn->fd = connfd;
-	conn->server = server;
+int kvs_proactor_init(struct kvs_server_s *server) {
+	if(server == NULL) {
+		printf("kvs_proactor_init: server is NULL\n");
+		return -1;
+	}
+	struct io_uring_params params;
+	memset(&params, 0, sizeof(params));
 
-	conn->r_buffer = (char*)kvs_malloc(BUFFER_LENGTH);
-	conn->r_total = BUFFER_LENGTH;
-	conn->r_idx = 0;
-	conn->response = (char*)kvs_malloc(BUFFER_LENGTH);
-	conn->w_total = BUFFER_LENGTH;
-	conn->w_idx = 0;
-	conn->state = 0;
-	memset(conn->r_buffer, 0, BUFFER_LENGTH);
-	memset(conn->response, 0, BUFFER_LENGTH);
+	struct io_uring *ring = (struct io_uring *)malloc(sizeof(struct io_uring));
+	io_uring_queue_init_params(ENTRIES_LENGTH, ring, &params);
+	server->uring = ring;
+
+	return 0;
+}
+
+int kvs_proactor_destroy(struct kvs_server_s *server) {
+	if(server == NULL || server->uring == NULL) {
+		return -1;
+	}
+	io_uring_queue_exit(server->uring);
+	free(server->uring);
+	server->uring = NULL;
 	return 0;
 }
 
 
-
-
-int proactor_start(struct kvs_server_s *server) {
+int kvs_proactor_start(struct kvs_server_s *server) {
+	assert(server->on_msg != NULL);
+	assert(server->on_send != NULL);
+	assert(server->on_accept != NULL);
+	assert(server->conns != NULL);
+	assert(server->uring != NULL);
 
 	int sockfd = p_init_server(server->port);
 	if(sockfd < 0) {
@@ -128,13 +135,9 @@ int proactor_start(struct kvs_server_s *server) {
 		return -1;
 	}
 	server->server_fd = sockfd;
-	kvs_handler = server->on_msg;
+	//kvs_handler = server->on_msg;
 
-	struct io_uring_params params;
-	memset(&params, 0, sizeof(params));
-
-	struct io_uring ring;
-	io_uring_queue_init_params(ENTRIES_LENGTH, &ring, &params);
+	struct io_uring *ring = server->uring;
 
 	
 #if 0
@@ -146,7 +149,7 @@ int proactor_start(struct kvs_server_s *server) {
 	struct sockaddr_in clientaddr;	
 	socklen_t len = sizeof(clientaddr);
 	
-	set_event_accept(&ring, sockfd, (struct sockaddr*)&clientaddr, &len, 0);
+	set_event_accept(ring, sockfd, (struct sockaddr*)&clientaddr, &len, 0);
 	
 #endif
 
@@ -156,14 +159,14 @@ int proactor_start(struct kvs_server_s *server) {
 	printf("Server started at port %d\n", server->port);
 	while (1) {
 
-		// io_uring_submit(&ring);
+		// io_uring_submit(ring);
 
 
 		// struct io_uring_cqe *cqe;
-		// io_uring_wait_cqe(&ring, &cqe);
+		// io_uring_wait_cqe(ring, &cqe);
 
 		// struct io_uring_cqe *cqes[128];
-		// int nready = io_uring_peek_batch_cqe(&ring, cqes, 128);  // epoll_wait
+		// int nready = io_uring_peek_batch_cqe(ring, cqes, 128);  // epoll_wait
 
 		// int i = 0;
 		// for (i = 0;i < nready;i ++) 
@@ -172,27 +175,27 @@ int proactor_start(struct kvs_server_s *server) {
 		unsigned head;
 		int count = 0;
 
-		// 1. 核心武器：提交并等待
-		// 这个函数会把之前所有 set_event 产生的 SQE 一次性提交
-		// 并且至少等待 1 个事件完成才返回
-		int ret = io_uring_submit_and_wait(&ring, 1);
+
+		int ret = io_uring_submit_and_wait(ring, 1);
 		if (ret < 0) {
 			if (errno == EINTR) continue;
-			break;
+			else {
+				perror("io_uring_submit_and_wait");
+				return -1;
+			}
 		}
 
-		// 2. 遍历所有已完成的事件
-		// 使用 io_uring 提供的标准宏，既安全又高效
-		io_uring_for_each_cqe(&ring, head, cqe) {
+		// go through all completed events using the macro provided by liburing
+		io_uring_for_each_cqe(ring, head, cqe) {
 			count ++ ;
 			struct io_uring_cqe *entries = cqe;
 			struct conn_info result;
 			memcpy(&result, &entries->user_data, sizeof(struct conn_info));
-			struct kvs_conn_s *cur_conn = &server->conns[KVS_CONNS_INST(result.fd)];
+			struct kvs_conn_s *cur_conn = &server->conns[result.fd];
 
 			if (result.event == EVENT_ACCEPT) {
 
-				set_event_accept(&ring, result.fd, (struct sockaddr*)&clientaddr, &len, 0);
+				set_event_accept(ring, result.fd, (struct sockaddr*)&clientaddr, &len, 0);
 				//printf("set_event_accept\n"); //
 
 				int connfd = entries->res;
@@ -200,30 +203,34 @@ int proactor_start(struct kvs_server_s *server) {
 					printf("%s:%d accept error\n", __FILE__, __LINE__);
 					continue;
 				}
-				struct kvs_conn_s *init_conn = &server->conns[KVS_CONNS_INST(connfd)];
-				kvs_init_conn(init_conn, connfd, server);
-				printf("Accepted a new connection: %d\n", connfd); //
-				set_event_recv(&ring, connfd, init_conn->r_buffer, init_conn->r_total, 0);
-
+				// todo: on_accept callback
+				// struct kvs_conn_s *init_conn = &server->conns[connfd];
+				// kvs_init_conn(init_conn, connfd, server);
+				// printf("Accepted a new connection: %d\n", connfd); //
+				// set_event_recv(ring, connfd, init_conn->r_buffer, init_conn->r_buf_sz, 0);
+				server->on_accept(server, connfd);
 				
 			} else if (result.event == EVENT_READ) {  //
 				//printf("EVENT_READ fd: %d\n", result.fd);
 				int r_size = entries->res;
 				if (r_size == 0) {
+					// if(server->on_close) {
+					// 	server->on_close(cur_conn);
+					// }
 					close(result.fd);
 				} else if (r_size > 0) {
-
 					int* r_buffer_len = &cur_conn->r_idx;
 					char* r_buffer = cur_conn->r_buffer;
-					char* w_buffer = cur_conn->response;
+
+
 					*r_buffer_len += r_size;
+					//cur_conn->r_idx += r_size;
 					
 					int length_resp = 0;
 					// process the received data
-					//int length_processed = kvs_handler(r_buffer, *r_buffer_len, w_buffer, BUFFER_LENGTH, &length_resp);
-					int length_processed = kvs_handler(cur_conn);
+					int length_processed = server->on_msg(cur_conn);
+					assert(length_processed >= 0);
 					// move the unprocessed data to the beginning of the read buffer
-					
 					if(length_processed > *r_buffer_len) {
 						//error
 						printf("%s:%d error\n", __FILE__, __LINE__);
@@ -233,11 +240,22 @@ int proactor_start(struct kvs_server_s *server) {
 						*r_buffer_len -= length_processed;
 						//fwrite(node->val, 1, node->len_val, stdout);
 						//fflush(stdout);
-						printf("unprocessed data: [%.*s]\n", *r_buffer_len, r_buffer + length_processed);
+						//printf("unprocessed data size: %d, buffer size: %d\n", *r_buffer_len, cur_conn->r_buf_sz);
 						memmove(r_buffer, r_buffer + length_processed, *r_buffer_len);
 					}
 
-					set_event_send(&ring, result.fd, w_buffer, length_resp, 0);
+					// todo: set recv again
+					// int remain = cur_conn->r_buf_sz - cur_conn->r_idx;
+					// if (remain > 0) {
+					// 	// 如果是特殊的“发RDB”状态，可能暂时不读，这里可以加个简单判断
+					// 	// if (conn->state != SEND_RDB) 
+					// 	set_event_recv(server->uring, cur_conn->fd, cur_conn->r_buffer + cur_conn->r_idx, remain, 0);
+					// } else {
+					// 	// 满了！这是网络层要处理的流控 (Backpressure)
+					// 	printf("Buffer full, pause reading.\n");
+					// }
+
+					//set_event_send(ring, result.fd, w_buffer, length_resp, 0);
 				} else {
 					// error
 				}
@@ -246,28 +264,40 @@ int proactor_start(struct kvs_server_s *server) {
 
 				int ret = entries->res;
 				if(ret < 0) {
-					// error
+					// todo:error handling
 					close(result.fd);
 					continue;
-				} else if(ret < cur_conn->w_idx) {
+				} 
+
+				if(ret < cur_conn->w_idx) {
 					// not send all data
-					memmove(cur_conn->response, cur_conn->response + ret, cur_conn->w_idx - ret);
-					cur_conn->w_idx -= ret;
-					set_event_send(&ring, result.fd, cur_conn->response, cur_conn->w_idx, 0);
+					//memmove(cur_conn->response, cur_conn->response + ret, cur_conn->w_idx - ret);
 					
+					set_event_send(ring, result.fd, cur_conn->response + ret, cur_conn->w_idx - ret, 0);
+					cur_conn->w_idx -= ret;
 					continue;
+				} else if (ret == cur_conn->w_idx) {
+					// sent all data
+					cur_conn->w_idx = 0;
+				} else {
+					// error
+					printf("%s:%d error in send\n", __FILE__, __LINE__);
+					assert(0);
 				}
+				
+				assert(cur_conn->w_idx == 0);
 
 				//printf("set_event_send ret: %d, %s\n", ret, buffer);
-				char* r_buffer = cur_conn->r_buffer;
-				int current_len = cur_conn->r_idx;
-				set_event_recv(&ring, result.fd, r_buffer + current_len, BUFFER_LENGTH - current_len, 0);
+				// char* r_buffer = cur_conn->r_buffer;
+				// int current_len = cur_conn->r_idx;
+				server->on_send(cur_conn);
+				//set_event_recv(ring, result.fd, r_buffer + current_len, BUFFER_LENGTH - current_len, 0);
 				
 			}
 			
 		}
-
-		io_uring_cq_advance(&ring, count);
+		// advance the completion queue to mark these events as processed
+		io_uring_cq_advance(ring, count);
 	}
 	return 0;
 }
