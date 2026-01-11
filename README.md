@@ -83,14 +83,21 @@ Actual QPS:     1979670.37
 前面一个4K的物理内存后8或16个字节存信息，后面的4K才是给用户的。。我说为什么当时jemalloc的物理内存占用比我小一半。。
 原来是我每次分配4K都用掉了8K。。
 
+
 ```shell
 key:11bytes value:21bytes  500w HSET
-malloc      | 1861238.70 qps | 618M VIRT | 543M RES
-kvs_mempool | 1990716.89 qps | 467M VIRT | 392M RES
-jemalloc    | 1949935.79 qps | 509M VIRT | 399M RES
-
-key:8bytes value:8bytes    500w HSET
-malloc      | 2103246.70 qps | 618M VIRT | 543M RES
-kvs_mempool | 2124817.74 qps | 314M VIRT | 239M RES
-jemalloc    | 2063489.44 qps | 335M VIRT | 244M RES
+malloc      | 2023916.21 qps | 620M VIRT | 545M RES
+kvs_mempool | 1984553.03 qps | 469M VIRT | 394M RES
+jemalloc    | 1989839.09 qps | 509M VIRT | 402M RES
 ```
+
+```shell
+key:8bytes value:8bytes    500w HSET
+malloc      | 2199975.10 qps | 620M VIRT | 545M RES
+kvs_mempool | 2060713.57 qps | 316M VIRT | 241M RES
+jemalloc    | 2151554.65 qps | 335M VIRT | 246M RES
+```
+
+### iouring异步
+
+1. iouring在内核中是并行执行的
