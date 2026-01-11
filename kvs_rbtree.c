@@ -2,11 +2,14 @@
 #include "common.h"
 
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 rbtree_node *rbtree_mini(rbtree *T, rbtree_node *x) {
+	assert(x != T->nil);
+	assert(x != NULL);
 	while (x->left != T->nil) {
 		x = x->left;
 	}
@@ -612,8 +615,8 @@ int kvs_rbtree_resp_get(kvs_rbtree_t *inst, char *key, int len_key, char **value
 
 	if (!inst || !key || !value || !len_value) return -1;
 	rbtree_node *node = rbtree_search(inst, key, len_key);
-	if (!node) return -1; // no exist
-	if (node == inst->nil) return -1;
+	if (!node) return -2; // no exist
+	if (node == inst->nil) return -2;
 
 	*value = node->value;
 	*len_value = node->len_val;
@@ -657,4 +660,18 @@ int kvs_rbtree_resp_mod(kvs_rbtree_t *inst, char *key, int len_key, char *value,
 
 	return 0;
 
+}
+
+
+int kvs_rbtree_filter(kvs_rbtree_t *inst, kvs_rbtree_item_filter filter, void* filter_ctx) {
+
+	if (!inst || !filter) return -1;
+	if (inst->root == inst->nil) return 0; // empty
+	rbtree_node *node = rbtree_mini(inst, inst->root);
+	while (node != inst->nil) {
+		filter(node->key, node->len_key, node->value, node->len_val, filter_ctx);
+		node = rbtree_successor(inst, node);
+	}
+
+	return 0;
 }

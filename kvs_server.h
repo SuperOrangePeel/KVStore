@@ -29,7 +29,6 @@ enum KVS_CONN_STATE {
     CONN_STATE_SLAVE_SEND_RDB,
     CONN_STATE_SLAVE_SEND_REPL,
     CONN_STATE_SLAVE_ONLINE,
-
     // CONN_STATE_MASTER_
 };
 
@@ -65,7 +64,7 @@ typedef struct kvs_conn_s {
 
 typedef int (*kvs_on_accept_cb)(struct kvs_server_s *server, int connfd);
 typedef int (*kvs_on_msg_cb)(struct kvs_conn_s *conn);
-typedef int (*kvs_on_send_cb)(struct kvs_conn_s *conn);
+typedef int (*kvs_on_send_cb)(struct kvs_conn_s *conn, int bytes_sent);
 typedef int (*kvs_on_close_cb)(struct kvs_conn_s *conn);
 
 struct kvs_server_s {
@@ -90,11 +89,14 @@ struct kvs_server_s {
     struct {
         int slaves_fds[KVS_MAX_SLAVES];
         int slave_count;
+        int max_slave_count;
         char *repl_backlog;
         size_t repl_backlog_size;
         size_t repl_backlog_idx;
 
-        int rdb_fd; 
+        int rdb_fd;
+        int syncing_slaves_count; // number of slaves in SYNC process
+        int repl_backlog_overflow; // 1: overflow, 0: not overflow
     } master;
 
     struct {
@@ -120,6 +122,7 @@ typedef int(*kvs_server_aof_data_parser_cb)(struct kvs_server_s* server, char* m
 void kvs_server_storage_recovery(struct kvs_server_s *server, kvs_server_aof_data_parser_cb aof_data_parser);
 
 int kvs_server_restore_entry(char data_type, char* key, int len_key, char* value, int len_val, void* arg);
-
+int kvs_server_save_rdb(struct kvs_server_s *server);
+int kvs_server_load_rdb(struct kvs_server_s *server);
 
 #endif

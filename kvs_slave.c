@@ -108,7 +108,7 @@ int _kvs_slave_sync_rdb(struct kvs_server_s *server) {
         return -1;
     }
 
-    kvs_persistence_load_rdb(server->pers_ctx, kvs_server_restore_entry, server);
+    kvs_server_load_rdb(server);
 
     return 0;
 }

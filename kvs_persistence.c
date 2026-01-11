@@ -3,6 +3,7 @@
 
 #include <bits/types/struct_iovec.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <errno.h>
@@ -10,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <string.h>
+#include <assert.h>
 
 
 kvs_pers_context_t kvs_aof_ctx = {0}; // global context
@@ -42,7 +44,7 @@ kvs_pers_context_t *kvs_persistence_create(char* aof_filename, char* rdb_filenam
         return NULL;
     }
     strncpy(ctx->rdb_filename, rdb_filename, strlen(rdb_filename) + 1);
-    ctx->rdb_fd = NULL;
+    //ctx->rdb_fp = NULL;
     ctx->rdb_size = 0;
 
     return ctx;
@@ -180,81 +182,92 @@ int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_aof_data_parser_cb
 }
 
 
-typedef struct kvs_rdb_callback_arg_s {
-    FILE* fp;
-    int data_type;
-} kvs_rdb_callback_arg_t;
 
+int _kvs_rdb_item_writer(char *data, int len, void* privdata) {
+    FILE *fp = *(FILE **)privdata;
 
-void _rdb_callback(char *key, int len_key, char *value, int len_val, void* arg) {
-    kvs_rdb_callback_arg_t *callback_arg = (kvs_rdb_callback_arg_t *)arg;
-    FILE *fp = callback_arg->fp;
-    char dt_char = (char)callback_arg->data_type;
-    fwrite(&dt_char, sizeof(char), 1, fp);
-    fwrite(&len_key, sizeof(int), 1, fp);
-    fwrite(key, sizeof(char), len_key, fp);
-    fwrite(&len_val, sizeof(int), 1, fp);
-    fwrite(value, sizeof(char), len_val, fp);
-
+    return fwrite(data, 1, len, fp);
 }
 
-
-
-int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_pers_rdb_cb func, void* db, int db_type) {
-    if(ctx->rdb_fd != NULL) {
-        fclose(ctx->rdb_fd);
-        ctx->rdb_fd = NULL;
-    }
-    ctx->rdb_fd = fopen(ctx->rdb_filename, "wb");
-    FILE* fp = ctx->rdb_fd;
-    kvs_rdb_callback_arg_t arg;
-    arg.fp = fp;
-    arg.data_type = db_type;
-    if(fp == NULL) {
+int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_storage_iterator_pt iterator, void* iter_arg) {
+    // if(ctx->rdb_fp != NULL) {
+    //     fclose(ctx->rdb_fp);
+    //     ctx->rdb_fp = NULL;
+    // }
+    char tmp_filename[64];
+    snprintf(tmp_filename, sizeof(tmp_filename), "%s_%d.tmp", ctx->rdb_filename, (int)getpid());
+    FILE* temp_rdb_fp = fopen(tmp_filename, "wb");
+    if(temp_rdb_fp == NULL) {
         return -1;
     }
 
-    func(db, _rdb_callback, (void*)&arg);
+    iterator(iter_arg, _kvs_rdb_item_writer, (void*)&temp_rdb_fp);
+
+
+    fflush(temp_rdb_fp);
+    fsync(fileno(temp_rdb_fp));
+    fclose(temp_rdb_fp);
 
     //kvs_hash_filter(&global_hash, _rdb_callback, &arg);
-    fflush(fp);
-    fsync(fileno(fp));
-    fclose(fp);
-    ctx->rdb_fd = NULL;
+    assert(ctx->rdb_filename != NULL);
+    if(rename(tmp_filename, ctx->rdb_filename) != 0) {
+        perror("rename RDB file");
+        return -1;
+    }
+    // ctx->rdb_fp = NULL;
     return 0;
 }
 
 /*
  *@return 0 success -1 error -2 format error
   */
-int kvs_persistence_load_rdb(kvs_pers_context_t *ctx, kvs_rdb_data_setter data_setter, void* arg) {
+int kvs_persistence_load_rdb(kvs_pers_context_t *ctx, kvs_rdb_item_loader_pt loader, void* arg) {
     if(ctx->rdb_filename == NULL) {
         return -1;        
     }
-    if(ctx->rdb_fd == NULL) {
-        ctx->rdb_fd = fopen(ctx->rdb_filename, "rb");
+    // if(ctx->rdb_fp == NULL) {
+    //     ctx->rdb_fp = fopen(ctx->rdb_filename, "rb");
+    // }
+
+    FILE* fp = fopen(ctx->rdb_filename, "rb");
+    if(fp == NULL) {
+        return -1;
     }
-    FILE* fp = ctx->rdb_fd;
-    int data_type = 0;
-    while(fread(&data_type, sizeof(char), 1, fp) == 1) {
-        int len_key = 0;
-        if(fread(&len_key, sizeof(int), 1, fp) != 1) {
+    int rdb_buf_size = 4096;
+    char rdb_buf[rdb_buf_size]; // 4KB
+    int rdb_buf_idx = 0;
+    while(1) {
+        size_t n_read = fread(rdb_buf + rdb_buf_idx, 1, rdb_buf_size - rdb_buf_idx, fp);
+        rdb_buf_idx += n_read;
+        int processed_bytes = loader(rdb_buf, rdb_buf_idx, arg);
+        if(processed_bytes < 0) {
+            fclose(fp);
             return -2;
         }
-        char* key = (char*)kvs_malloc(len_key);
-        if(fread(key, sizeof(char), len_key, fp) != len_key) {
-            return -2;
+        if(processed_bytes < rdb_buf_idx) {
+            // move unprocessed data to the beginning
+            memmove(rdb_buf, rdb_buf + processed_bytes, rdb_buf_idx - processed_bytes);
         }
-        int len_val = 0;
-        if(fread(&len_val, sizeof(int), 1, fp) != 1) {
-            return -2;
+        rdb_buf_idx -= processed_bytes;
+
+        if(n_read == 0) {
+            if(rdb_buf_idx == 0) {
+                break; // all data processed
+            } else {
+                // still some data left but no more data to read
+                printf("%s:%d RDB format error: incomplete data at the end\n", __FILE__, __LINE__);
+                fclose(fp);
+                return -2;
+            }
+            if(feof(fp)) {
+                break;
+            } else if(ferror(fp)) {
+                fclose(fp);
+                return -2;
+            }
         }
-        char* val = (char*)kvs_malloc(len_val);
-        if(fread(val, sizeof(char), len_val, fp) != len_val) {
-            return -2;
-        }
-        data_setter(data_type, key, len_key, val, len_val, arg);
     }
+    fclose(fp);
     return 0;
 }
 

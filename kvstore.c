@@ -42,15 +42,11 @@ int main(int argc, char *argv[]) {
 		global_server->slave.master_port = master_port;
 		printf("Start as slave, master %s:%d\n", master_ip, master_port);
 
-
 		kvs_slave_connect_master(global_server);
 
 		int master_fd = global_server->slave.master_fd;
 
 		assert(master_fd > 0);
-		set_event_recv(global_server->uring, master_fd, 
-			global_server->conns[master_fd].r_buffer, 
-			global_server->conns[master_fd].r_buf_sz, 0);
 		
 		kvs_handler_register_master(&global_server->conns[master_fd], master_fd, global_server);
 

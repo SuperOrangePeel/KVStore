@@ -35,4 +35,7 @@ int kvs_array_resp_del(kvs_array_t *inst, char *key, int len_key);
 int kvs_array_resp_mod(kvs_array_t *inst, char *key, int len_key, char *value, int len_val);
 int kvs_array_resp_exist(kvs_array_t *inst, char* key, int len_key);
 
+typedef void(*kvs_array_item_filter)(char *key, int len_key, char *value, int len_val, void* arg);
+void kvs_array_filter(kvs_array_t *inst, kvs_array_item_filter filter, void* filter_ctx);
+
 #endif

@@ -502,14 +502,14 @@ int kvs_hash_resp_exist(kvs_hash_t *hash, char* key, int len_key) {
 
 
 
-void kvs_hash_filter(kvs_hash_t *hash, kvs_item_callback callback, void *arg) {
-	if(!hash || !callback) return;
+void kvs_hash_filter(kvs_hash_t *hash, kvs_hash_item_filter filter, void *arg) {
+	if(!hash || !filter) return;
 
 	int i = 0;
 	for(i = 0; i < hash->max_slots; ++ i) {
 		hashnode_t *node = hash->nodes[i];
 		while(node != NULL) {
-			callback(node->key, node->len_key, node->value, node->len_val, arg);
+			filter(node->key, node->len_key, node->value, node->len_val, arg);
 			node = node->next;
 		}
 	}

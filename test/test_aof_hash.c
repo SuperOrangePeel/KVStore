@@ -77,6 +77,7 @@ void run_test(const char *ip, int port, int mode, int count) {
 
         // 2. 批量接收并校验
         int r = recv(sock, recv_buf, sizeof(recv_buf) - 1, MSG_DONTWAIT);
+        // printf("recv:[%.*s]\n", r, recv_buf);
 
         if(r <=0 && errno != EAGAIN) {
             perror("Receive failed");
@@ -90,7 +91,7 @@ void run_test(const char *ip, int port, int mode, int count) {
         }
 
         // 3. 打印进度
-        if (sent_count % 10000 == 0) {
+        if (sent_count % 500000 == 0) {
             printf("Progress: Sent %d, Confirmed %d\n", sent_count, success_count);
             fflush(stdout);
         }

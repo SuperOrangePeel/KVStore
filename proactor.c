@@ -6,13 +6,15 @@
 #include <liburing.h>
 #include <netinet/in.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <assert.h>
 
 
-#define EVENT_ACCEPT   	0
-#define EVENT_READ		1
-#define EVENT_WRITE		2
+#define EVENT_ACCEPT   		0
+#define EVENT_READ			1
+#define EVENT_WRITE			2
+#define EVENT_WRITE_BUFFER 	3
 
 // #define KVS_CONNS_INST(fd) (fd - 3)
 
@@ -25,11 +27,20 @@ struct conn_info {
 int p_init_server(unsigned short port) {	
 
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);	
+
+	int reuse = 1;  // 非 0 值表示启用该选项，0 表示禁用
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        perror("setsockopt SO_REUSEADDR failed");
+        close(sockfd);
+        return -1;
+    }
+
 	struct sockaddr_in serveraddr;	
 	memset(&serveraddr, 0, sizeof(struct sockaddr_in));	
 	serveraddr.sin_family = AF_INET;	
 	serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);	
 	serveraddr.sin_port = htons(port);	
+
 
 	if (-1 == bind(sockfd, (struct sockaddr*)&serveraddr, sizeof(struct sockaddr))) {		
 		perror("bind");		
@@ -42,7 +53,7 @@ int p_init_server(unsigned short port) {
 }
 
 
-int set_event_recv(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags) {
+static int _set_event_recv(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags) {
 
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 
@@ -57,7 +68,7 @@ int set_event_recv(struct io_uring *ring, int sockfd, void *buf, size_t len, int
 }
 
 
-int set_event_send(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags) {
+static int _set_event_send(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags) {
 
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 
@@ -69,6 +80,18 @@ int set_event_send(struct io_uring *ring, int sockfd, void *buf, size_t len, int
 	io_uring_prep_send(sqe, sockfd, buf, len, flags);
 	memcpy(&sqe->user_data, &accept_info, sizeof(struct conn_info));
 
+}
+
+static int _set_event_send_raw_buffer(struct io_uring *ring, int sockfd, void *buf, size_t len, int flags) {
+	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+
+	struct conn_info accept_info = {
+		.fd = sockfd,
+		.event = EVENT_WRITE_BUFFER,
+	};
+	
+	io_uring_prep_send(sqe, sockfd, buf, len, flags);
+	memcpy(&sqe->user_data, &accept_info, sizeof(struct conn_info));
 }
 
 
@@ -203,20 +226,16 @@ int kvs_proactor_start(struct kvs_server_s *server) {
 					printf("%s:%d accept error\n", __FILE__, __LINE__);
 					continue;
 				}
-				// todo: on_accept callback
-				// struct kvs_conn_s *init_conn = &server->conns[connfd];
-				// kvs_init_conn(init_conn, connfd, server);
-				// printf("Accepted a new connection: %d\n", connfd); //
-				// set_event_recv(ring, connfd, init_conn->r_buffer, init_conn->r_buf_sz, 0);
 				server->on_accept(server, connfd);
 				
-			} else if (result.event == EVENT_READ) {  //
-				//printf("EVENT_READ fd: %d\n", result.fd);
+			} else if (result.event == EVENT_READ) {  
 				int r_size = entries->res;
+				cur_conn->is_reading = 0;
 				if (r_size == 0) {
-					// if(server->on_close) {
-					// 	server->on_close(cur_conn);
-					// }
+					if(server->on_close != NULL) {
+						//printf("%s:%d connection closed, fd: %d\n", __FILE__, __LINE__, result.fd);
+						server->on_close(cur_conn);
+					}
 					close(result.fd);
 				} else if (r_size > 0) {
 					int* r_buffer_len = &cur_conn->r_idx;
@@ -234,65 +253,86 @@ int kvs_proactor_start(struct kvs_server_s *server) {
 					if(length_processed > *r_buffer_len) {
 						//error
 						printf("%s:%d error\n", __FILE__, __LINE__);
+						assert(0);
 					} else if(length_processed == *r_buffer_len) {
 						*r_buffer_len = 0;
 					} else {
 						*r_buffer_len -= length_processed;
-						//fwrite(node->val, 1, node->len_val, stdout);
-						//fflush(stdout);
-						//printf("unprocessed data size: %d, buffer size: %d\n", *r_buffer_len, cur_conn->r_buf_sz);
 						memmove(r_buffer, r_buffer + length_processed, *r_buffer_len);
 					}
 
-					// todo: set recv again
-					// int remain = cur_conn->r_buf_sz - cur_conn->r_idx;
-					// if (remain > 0) {
-					// 	// 如果是特殊的“发RDB”状态，可能暂时不读，这里可以加个简单判断
-					// 	// if (conn->state != SEND_RDB) 
-					// 	set_event_recv(server->uring, cur_conn->fd, cur_conn->r_buffer + cur_conn->r_idx, remain, 0);
-					// } else {
-					// 	// 满了！这是网络层要处理的流控 (Backpressure)
-					// 	printf("Buffer full, pause reading.\n");
-					// }
-
-					//set_event_send(ring, result.fd, w_buffer, length_resp, 0);
+					if(cur_conn->is_reading == 0) {
+						// set recv event again
+						_set_event_recv(ring, result.fd, r_buffer + *r_buffer_len, cur_conn->r_buf_sz - *r_buffer_len, 0);
+						cur_conn->is_reading = 1;
+					}
 				} else {
+					// todo: error handling
+					printf("%s:%d recv error,%d: %s, close_fd:%d\n", __FILE__, __LINE__, entries->res, strerror(entries->res), result.fd);
+					server->on_close(cur_conn);
+					close(result.fd);
 					// error
 				}
 			}  else if (result.event == EVENT_WRITE) {
   //
 
 				int ret = entries->res;
+				cur_conn->is_writing = 0;
+				assert(cur_conn->w_idx >= 0);
 				if(ret < 0) {
 					// todo:error handling
+					
+					printf("%s:%d send error\n", __FILE__, __LINE__);
 					close(result.fd);
+					assert(0);
 					continue;
 				} 
+				if(ret > cur_conn->w_idx) {
+					// error
+					printf("%s:%d send more than w_idx, ret: %d, w_idx: %d\n", __FILE__, __LINE__, ret, cur_conn->w_idx);
+					printf("buffer[%.*s]\n", cur_conn->w_idx, cur_conn->response);
+					assert(0);
+				}
 
+				
 				if(ret < cur_conn->w_idx) {
-					// not send all data
-					//memmove(cur_conn->response, cur_conn->response + ret, cur_conn->w_idx - ret);
+					if(ret > 0) {
+
+						// not send all data
+						memmove(cur_conn->response, cur_conn->response + ret, cur_conn->w_idx - ret);
+						cur_conn->w_idx -= ret;
+						
+					}
+					// ret == 0, need to resend all data
+					_set_event_send(ring, result.fd, cur_conn->response, cur_conn->w_idx, 0);
+					cur_conn->is_writing = 1;
+
 					
-					set_event_send(ring, result.fd, cur_conn->response + ret, cur_conn->w_idx - ret, 0);
-					cur_conn->w_idx -= ret;
 					continue;
 				} else if (ret == cur_conn->w_idx) {
 					// sent all data
-					cur_conn->w_idx = 0;
-				} else {
-					// error
-					printf("%s:%d error in send\n", __FILE__, __LINE__);
-					assert(0);
+					cur_conn->w_idx -= ret;
+					assert(cur_conn->w_idx == 0);
 				}
 				
 				assert(cur_conn->w_idx == 0);
 
-				//printf("set_event_send ret: %d, %s\n", ret, buffer);
+				//printf("_set_event_send ret: %d, %s\n", ret, buffer);
 				// char* r_buffer = cur_conn->r_buffer;
 				// int current_len = cur_conn->r_idx;
-				server->on_send(cur_conn);
-				//set_event_recv(ring, result.fd, r_buffer + current_len, BUFFER_LENGTH - current_len, 0);
+				server->on_send(cur_conn, ret);
+				//_set_event_recv(ring, result.fd, r_buffer + current_len, BUFFER_LENGTH - current_len, 0);
 				
+			} else if(result.event == EVENT_WRITE_BUFFER) {
+				int ret = entries->res;
+				cur_conn->is_writing = 0;
+				if(ret < 0) {
+					close(result.fd);
+					printf("%s:%d send error\n", __FILE__, __LINE__);
+					assert(0);
+				}
+
+				server->on_send(cur_conn, ret);
 			}
 			
 		}
@@ -303,3 +343,82 @@ int kvs_proactor_start(struct kvs_server_s *server) {
 }
 
 
+int kvs_proactor_set_send_event_raw_buffer(struct kvs_conn_s *conn, char *send_buf, int send_buf_sz) {
+	if(conn == NULL || send_buf == NULL || send_buf_sz <=0) {
+		return -1;
+	}
+
+	if(conn->is_writing == 0){	
+		_set_event_send_raw_buffer(conn->server->uring, conn->fd, send_buf, send_buf_sz, 0);
+		conn->is_writing = 1;
+	}
+	return 0;
+}
+
+
+
+/*
+ * @return 0 if success, -1 if error, -2 if overflow
+ */
+int kvs_proactor_set_send_event(struct kvs_conn_s *conn, char *msg, int msg_sz) {
+	if(conn == NULL || msg == NULL || msg_sz <=0) {
+		return -1;
+	}
+	if(msg_sz + conn->w_idx > conn->w_buf_sz) {
+		// overflow
+		printf("%s:%d response buffer overflow\n", __FILE__, __LINE__);
+		return -2;
+	}
+	memcpy(conn->response + conn->w_idx, msg, msg_sz);
+	
+	conn->w_idx += msg_sz;
+	
+
+	if(conn->is_writing == 0){	
+		_set_event_send(conn->server->uring, conn->fd, conn->response, conn->w_idx, 0);
+		conn->is_writing = 1;
+	}
+	return 0;
+}
+
+int kvs_proactor_set_send_event_manual(struct kvs_conn_s *conn) {
+	if(conn == NULL) {
+		return -1;
+	}
+	if(conn->w_idx <=0) {
+		// nothing to send
+		return 0;
+	}
+
+	if(conn->is_writing == 0){	
+		_set_event_send(conn->server->uring, conn->fd, conn->response, conn->w_idx, 0);
+		conn->is_writing = 1;
+	}
+	return 0;
+}
+
+/*
+ * @return 0 if success, -1 if error -2 if overflow
+ */
+int kvs_proactor_set_recv_event(struct kvs_conn_s *conn) {
+	if(conn == NULL ) {
+		return -1;
+	}
+	if(conn->r_buffer == NULL || conn->r_buf_sz <=0) {
+		return -1;
+	}
+	if(conn->r_idx >= conn->r_buf_sz) {
+		// overflow
+		printf("%s:%d recv buffer overflow, fd:%d\n", __FILE__, __LINE__, conn->fd);
+		printf("BUFFER: [%.*s]", conn->r_idx, conn->r_buffer);
+		return -2;
+	}
+	if(conn->is_reading) {
+		//printf("%s:%d recv event already set, fd:%d\n", __FILE__, __LINE__,  conn->fd);
+		// already reading
+		return 0;
+	}
+	conn->is_reading = 1;
+	_set_event_recv(conn->server->uring, conn->fd, conn->r_buffer + conn->r_idx, conn->r_buf_sz - conn->r_idx, 0);
+	return 0;
+}

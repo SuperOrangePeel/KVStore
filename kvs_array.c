@@ -13,6 +13,7 @@
 kvs_array_t *kvs_array_create(int size) {
 	if(size <= 0) return NULL;
 	kvs_array_t *inst = (kvs_array_t *)kvs_malloc(sizeof(kvs_array_t));
+	memset(inst, 0, sizeof(kvs_array_t));
 	if (inst->table) {
 		printf("table has alloc\n");
 		return NULL;
@@ -24,7 +25,7 @@ kvs_array_t *kvs_array_create(int size) {
 
 	inst->total = 0;
 
-	return 0;
+	return inst;
 }
 
 void kvs_array_destroy(kvs_array_t *inst) {
@@ -194,6 +195,7 @@ int kvs_array_exist(kvs_array_t *inst, char *key) {
  */
 int kvs_array_resp_set(kvs_array_t *inst, char *key, int len_key, char *value, int len_val) {
 	if (inst == NULL || key == NULL || len_key <= 0|| value == NULL || len_val <= 0) return -1;
+	//printf("kvs_array_resp_set called\n");
 	if (inst->total == KVS_ARRAY_SIZE) return -1;
 
 	//printf("kvs_array_resp_exist before\n");
@@ -327,3 +329,12 @@ int kvs_array_resp_exist(kvs_array_t *inst, char* key, int len_key) {
 	return -2;
 }
 
+void kvs_array_filter(kvs_array_t *inst, kvs_array_item_filter filter, void* filter_ctx) {
+	if(!inst || !filter) return;
+	int i = 0;
+	for(i = 0; i < inst->total; ++ i) {
+		if(inst->table[i].key != NULL) {
+			filter(inst->table[i].key, inst->table[i].len_key, inst->table[i].value, inst->table[i].len_val, filter_ctx);
+		}
+	}
+}

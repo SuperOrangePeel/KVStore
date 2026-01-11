@@ -19,7 +19,7 @@ int kvs_hash_resp_del(kvs_hash_t *hash, char *key, int len_key);
 int kvs_hash_resp_mod(kvs_hash_t *hash, char *key, int len_key, char *value, int len_val);
 int kvs_hash_resp_exist(kvs_hash_t *hash, char* key, int len_key);
 
-typedef void(*kvs_item_callback)(char *key, int len_key, char *value, int len_val, void* arg);
-void kvs_hash_filter(kvs_hash_t *hash, kvs_item_callback callback, void *arg);
+typedef void(*kvs_hash_item_filter)(char *key, int len_key, char *value, int len_val, void* arg);
+void kvs_hash_filter(kvs_hash_t *hash, kvs_hash_item_filter filter, void *arg);
 
 #endif
