@@ -30,22 +30,22 @@ void reverse_string(char* str) {
     }
 }
 
-// 构造 HSET 指令
-int format_hset(char *buf, int i) {
+// 构造 RSET 指令
+int format_rset(char *buf, int i) {
     char key[32], val[64];
     sprintf(key, "key:%07d", i);
     reverse_string(key);
     sprintf(val, "value_content_%07d", i);
-    return sprintf(buf, "*3\r\n$4\r\nHSET\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
+    return sprintf(buf, "*3\r\n$4\r\nRSET\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
                    strlen(key), key, strlen(val), val);
 }
 
-// 构造 HGET 指令
-int format_hget(char *buf, int i) {
+// 构造 RGET 指令
+int format_rget(char *buf, int i) {
     char key[32];
     sprintf(key, "key:%07d", i);
     reverse_string(key);
-    return sprintf(buf, "*2\r\n$4\r\nHGET\r\n$%ld\r\n%s\r\n", 
+    return sprintf(buf, "*2\r\n$4\r\nRGET\r\n$%ld\r\n%s\r\n", 
                    strlen(key), key);
 }
 
@@ -88,7 +88,7 @@ void run_test(const char *ip, int port, int mode, int count) {
     while (success_count < count) {
         // 1. 批量发送
         while (sent_count < count && (sent_count - success_count) < BATCH_SIZE) {
-            int len = (mode == 1) ? format_hset(send_buf, sent_count) : format_hget(send_buf, sent_count);
+            int len = (mode == 1) ? format_rset(send_buf, sent_count) : format_rget(send_buf, sent_count);
             if (send(sock, send_buf, len, 0) <= 0) break;
             sent_count++;
         }
@@ -109,7 +109,7 @@ void run_test(const char *ip, int port, int mode, int count) {
         }
 
         // 3. 打印进度
-        if (sent_count % 500000 == 0) {
+        if (sent_count % 1000000 == 0) {
             printf("Progress: Sent %d, Confirmed %d\n", sent_count, success_count);
             fflush(stdout);
         }

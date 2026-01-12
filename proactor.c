@@ -15,6 +15,7 @@
 #define EVENT_READ			1
 #define EVENT_WRITE			2
 #define EVENT_WRITE_BUFFER 	3
+#define EVENT_TIMER			4
 
 // #define KVS_CONNS_INST(fd) (fd - 3)
 
@@ -50,6 +51,19 @@ int p_init_server(unsigned short port) {
 	listen(sockfd, 10);
 	
 	return sockfd;
+}
+
+static int _set_event_timeout(struct io_uring *ring, struct kvs_server_s *server, int sec, int nsec) {
+	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+	server->ts.tv_sec = sec;
+	server->ts.tv_nsec = nsec;
+
+	struct conn_info accept_info = {
+		.fd = -1,
+		.event = EVENT_TIMER,
+	};
+	io_uring_prep_timeout(sqe, &server->ts, 0, 0);
+	memcpy(&sqe->user_data, &accept_info, sizeof(struct conn_info));
 }
 
 
@@ -173,6 +187,7 @@ int kvs_proactor_start(struct kvs_server_s *server) {
 	socklen_t len = sizeof(clientaddr);
 	
 	set_event_accept(ring, sockfd, (struct sockaddr*)&clientaddr, &len, 0);
+	_set_event_timeout(ring, server, 1, 0); // 1 second timeout
 	
 #endif
 
@@ -198,6 +213,7 @@ int kvs_proactor_start(struct kvs_server_s *server) {
 		unsigned head;
 		int count = 0;
 
+		
 
 		int ret = io_uring_submit_and_wait(ring, 1);
 		if (ret < 0) {
@@ -215,6 +231,7 @@ int kvs_proactor_start(struct kvs_server_s *server) {
 			struct conn_info result;
 			memcpy(&result, &entries->user_data, sizeof(struct conn_info));
 			struct kvs_conn_s *cur_conn = &server->conns[result.fd];
+
 
 			if (result.event == EVENT_ACCEPT) {
 
@@ -282,9 +299,9 @@ int kvs_proactor_start(struct kvs_server_s *server) {
 				if(ret < 0) {
 					// todo:error handling
 					
-					printf("%s:%d send error\n", __FILE__, __LINE__);
+					printf("%s:%d send error, %d: %s\n", __FILE__, __LINE__, ret, strerror(-ret));
 					close(result.fd);
-					assert(0);
+					// assert(0);
 					continue;
 				} 
 				if(ret > cur_conn->w_idx) {
@@ -333,6 +350,15 @@ int kvs_proactor_start(struct kvs_server_s *server) {
 				}
 
 				server->on_send(cur_conn, ret);
+			} else if(result.event == EVENT_TIMER) {
+				// timer event
+				if(server->on_timer != NULL)
+					server->on_timer(server);
+				_set_event_timeout(ring, server, 1, 0); // 1 second timeout
+			} else {
+				// unknown event
+				printf("%s:%d unknown event\n", __FILE__, __LINE__);
+				assert(0);
 			}
 			
 		}

@@ -106,6 +106,25 @@ int kvs_persistence_write_aof(kvs_pers_context_t *ctx, char* data, size_t data_l
     return 0;
 }
 
+int kvs_persistence_flush_aof(kvs_pers_context_t *ctx) {
+    if(ctx == NULL) {
+        return -1;
+    }
+    if(ctx->aof_fd == -1) {
+        return -1;
+    }
+    if(ctx->write_offset > 0) {
+        ssize_t bytes_written = write(ctx->aof_fd, ctx->write_buffer, ctx->write_offset);
+        if(bytes_written != ctx->write_offset) {
+            printf("AOF flush write error: %s\n", strerror(errno));
+            return -1;
+        }
+        ctx->write_offset = 0;
+    }
+    fsync(ctx->aof_fd);
+    return 0;
+}
+
 #define LOAD_AOF_FILE_BUFFER_SIZE 1024 // 16384 // 16 * 1024
 
 /*

@@ -1014,7 +1014,7 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn) {
 				// directly set to send replication backlog
 				conn->state = CONN_STATE_SLAVE_SEND_REPL;
 				// todo:
-				assert(0);
+				break;
 			}
 			assert(conn->w_idx == 0);
 			// start to format RDB file sending response
@@ -1163,9 +1163,11 @@ int kvs_handler_on_close(struct kvs_conn_s *conn) {
 		//printf("%s:%d slave connection closed, fd: %d\n", __FILE__, __LINE__, conn->fd);
 		// remove from server's slave fds list
 		assert(conn->slave_info.slave_idx >=0);
-		printf("%s:%d removing slave connection, fd: %d, slave_idx: %d, slave_count: %d\n", 
-			__FILE__, __LINE__, conn->fd, conn->slave_info.slave_idx, conn->server->master.slave_count);
-		assert(conn->slave_info.slave_idx < conn->server->master.slave_count);
+		
+		if(conn->slave_info.slave_idx >= conn->server->master.slave_count) {
+			printf("%s:%d invalid slave idx: %d, slave count: %d\n", __FILE__, __LINE__, conn->slave_info.slave_idx, conn->server->master.slave_count);
+			assert(0);
+		}
 		int slave_idx = conn->slave_info.slave_idx;
 		int last_slave_idx = conn->server->master.slave_count - 1;
 		if(slave_idx < last_slave_idx) {
@@ -1183,6 +1185,8 @@ int kvs_handler_on_close(struct kvs_conn_s *conn) {
 		}
 		conn->slave_info.slave_idx = -1;
 		conn->slave_info.is_slave = 0;
+		printf("%s:%d removing slave connection, fd: %d, slave_idx: %d, slave_count: %d\n", 
+			__FILE__, __LINE__, conn->fd, conn->slave_info.slave_idx, conn->server->master.slave_count);
 			
 	}
 
@@ -1190,6 +1194,14 @@ int kvs_handler_on_close(struct kvs_conn_s *conn) {
 	conn->r_idx = 0;
 	conn->w_idx = 0;
 
+
+	return 0;
+}
+
+int kvs_handler_on_timer(struct kvs_server_s *server) {
+	if(server == NULL) return -1;
+
+	kvs_persistence_flush_aof(server->pers_ctx);
 
 	return 0;
 }

@@ -28,6 +28,7 @@ kvs_pers_context_t * kvs_persistence_create(char* aof_filename, char* rdb_filena
 int kvs_persistence_destroy(kvs_pers_context_t *ctx);
 int kvs_persistence_write_aof(kvs_pers_context_t *ctx, char* data, size_t data_len);
 int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_aof_data_parser_cb data_parser, void* arg);
+int kvs_persistence_flush_aof(kvs_pers_context_t *ctx);
 
 
 typedef int (*kvs_rdb_item_writer_pt)(char* data, int len, void* privdata);

@@ -18,6 +18,7 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn);
 int kvs_handler_on_response(struct kvs_conn_s *conn, int bytes_sent);
 int kvs_handler_on_accept(struct kvs_server_s *server, int client_fd);
 int kvs_handler_on_close(struct kvs_conn_s *conn);
+int kvs_handler_on_timer(struct kvs_server_s *server);
 
 // There are only two hard things in computer science: cache invalidation and naming things. !!
 /*

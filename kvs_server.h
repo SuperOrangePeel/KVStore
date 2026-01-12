@@ -1,6 +1,7 @@
 #ifndef __KVS_SERVER_H__
 #define __KVS_SERVER_H__
 #include <stdlib.h>
+#include <liburing.h>
 
 #define ENABLE_ARRAY 1
 #define ENABLE_RBTREE 1
@@ -66,6 +67,7 @@ typedef int (*kvs_on_accept_cb)(struct kvs_server_s *server, int connfd);
 typedef int (*kvs_on_msg_cb)(struct kvs_conn_s *conn);
 typedef int (*kvs_on_send_cb)(struct kvs_conn_s *conn, int bytes_sent);
 typedef int (*kvs_on_close_cb)(struct kvs_conn_s *conn);
+typedef int (*kvs_on_timer_cb)(struct kvs_server_s *server);
 
 struct kvs_server_s {
     unsigned short port;
@@ -85,6 +87,9 @@ struct kvs_server_s {
     kvs_on_msg_cb on_msg;
     kvs_on_send_cb on_send;
     kvs_on_close_cb on_close;
+    kvs_on_timer_cb on_timer;
+
+    struct __kernel_timespec ts;
 
     struct {
         int slaves_fds[KVS_MAX_SLAVES];
@@ -111,7 +116,7 @@ struct kvs_server_s {
 };
 
 struct kvs_server_s *kvs_server_init(unsigned short port, kvs_on_accept_cb on_accept,
-	kvs_on_msg_cb on_msg, kvs_on_send_cb on_send, kvs_on_close_cb on_close);
+	kvs_on_msg_cb on_msg, kvs_on_send_cb on_send, kvs_on_close_cb on_close, kvs_on_timer_cb on_timer);
 
 void kvs_server_destroy(struct kvs_server_s *server);
 

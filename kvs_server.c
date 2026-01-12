@@ -23,7 +23,7 @@ enum {
 struct kvs_server_s *global_server = NULL;
 
 struct kvs_server_s *kvs_server_init(unsigned short port, kvs_on_accept_cb on_accept,
-	kvs_on_msg_cb on_msg, kvs_on_send_cb on_send, kvs_on_close_cb on_close) {
+	kvs_on_msg_cb on_msg, kvs_on_send_cb on_send, kvs_on_close_cb on_close, kvs_on_timer_cb on_timer) {
 	kvs_global_mempool_init(); // init global mempool first
 
     struct kvs_server_s *server = (struct kvs_server_s *)kvs_malloc(sizeof(struct kvs_server_s));
@@ -50,6 +50,8 @@ struct kvs_server_s *kvs_server_init(unsigned short port, kvs_on_accept_cb on_ac
 	server->on_send = on_send;
 	server->on_accept = on_accept;
 	server->on_close = on_close;
+	server->on_timer = on_timer;
+
 
 	server->master.slave_count = 0;
 	server->master.max_slave_count = KVS_MAX_SLAVES;

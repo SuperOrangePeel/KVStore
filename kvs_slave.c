@@ -58,6 +58,7 @@ int _kvs_slave_sync_rdb(struct kvs_server_s *server) {
         return -1;
     }
     char header_buf[64];
+    // todo: what if there is no rdb data from master?
     ssize_t received = recv(server->slave.master_fd, header_buf, sizeof(header_buf), 0);
     if (received <= 0) {
         perror("recv RDB header");

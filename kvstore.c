@@ -16,7 +16,8 @@ int main(int argc, char *argv[]) {
 	
 
 	global_server = kvs_server_init(port, kvs_handler_on_accept, 
-		kvs_handler_on_msg, kvs_handler_on_response, kvs_handler_on_close);
+		kvs_handler_on_msg, kvs_handler_on_response, 
+		kvs_handler_on_close, kvs_handler_on_timer);
 
 	kvs_proactor_init(global_server);
 
@@ -46,6 +47,9 @@ int main(int argc, char *argv[]) {
 
 		int master_fd = global_server->slave.master_fd;
 
+		printf("Connected to master %s:%d, fd: %d\n", 
+			global_server->slave.master_ip, 
+			global_server->slave.master_port, master_fd);
 		assert(master_fd > 0);
 		
 		kvs_handler_register_master(&global_server->conns[master_fd], master_fd, global_server);
