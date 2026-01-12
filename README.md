@@ -17,7 +17,7 @@
 ### 架构设计
 ![image](https://disk.0voice.com/p/py)
 
-
+![image](./images/architecture.png)
 ### proactor
 
 用户需要定义
@@ -27,6 +27,7 @@ struct kvs_server_s {
     int (*on_accept)(struct kvs_server_s *server, int connfd);
     int (*on_msg)(struct kvs_conn_s *conn);
     int (*on_send)(struct kvs_conn_s *conn);
+    int (*on_close)(struct kvs_conn_s *conn);
     struct kvs_conn_s *conns;
     int port; // 用户填写想要监听的端口
     int server_fd; // 框架自动初始化
@@ -36,6 +37,14 @@ struct kvs_server_s {
 }
 
 struct kvs_conn_s {
+    int fd;
+	char* r_buffer;
+	int r_buf_sz;
+    int r_idx;
+	char* response;
+	int w_buf_sz;
+    int w_idx;
+
     // 用户自定义参数..
 };
 ```
@@ -80,8 +89,8 @@ Actual QPS:     1979670.37
 如果用posix_memaligan分配内存的话，一定不要4K对齐，这玩意分配内存之前要几个byte的空间存这次分配内存的大小信息等等，
 要是4K对齐的话，第一次分配可能问题不大，因为此时堆指针还没4k对齐，下一次分配时那就炸了，
 因为此刻堆指针是4K对齐的，然后这玩意又需要存一点信息，那就不得不用掉8K的物理内存，
-前面一个4K的物理内存后8或16个字节存信息，后面的4K才是给用户的。。我说为什么当时jemalloc的物理内存占用比我小一半。。
-原来是我每次分配4K都用掉了8K。。
+前面一个4K的物理内存后8或16个字节存信息，后面的4K才是给用户的.我说为什么当时jemalloc的物理内存占用比我小一半
+原来是我每次分配4K都用掉了8K
 
 
 ```shell
