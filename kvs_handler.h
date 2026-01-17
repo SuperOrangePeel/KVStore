@@ -34,7 +34,7 @@ struct kvs_handler_s {
  * @param conn Connection object
  * @return int 
  */
-int kvs_handler_on_msg(struct kvs_conn_s *conn);
+int kvs_handler_on_msg(struct kvs_conn_s *conn, int *read_size);
 
 int kvs_handler_on_send(struct kvs_conn_s *conn, int bytes_sent);
 int kvs_handler_on_accept(struct kvs_conn_s *conn);

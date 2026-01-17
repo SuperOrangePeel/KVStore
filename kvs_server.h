@@ -2,8 +2,12 @@
 #define __KVS_SERVER_H__
 #include <stdlib.h>
 #include <liburing.h>
+#include <sys/signalfd.h>
+#include <signal.h>
 
-#include "kvs_proactor.h"
+//#include "kvs_proactor.h"
+#include "kvs_network.h"
+#include "kvs_event_loop.h"
 #include "kvs_types.h"
 #include "kvs_persistence.h"
 
@@ -112,10 +116,8 @@ struct kvs_master_s {
     struct kvs_server_s *server;
 };
 
-
-
 struct kvs_server_s {
-    struct kvs_proactor_s *proactor;
+    struct kvs_network_s network;
 
     struct kvs_pers_context_s *pers_ctx;
     //kvs_mp_pool_t *mempool; // common.c
@@ -126,14 +128,18 @@ struct kvs_server_s {
     struct kvs_master_s* master;
     struct kvs_slave_s* slave;
     pid_t rdb_child_pid;
+    int signal_fd;
+    struct signalfd_siginfo signal_info;
+    struct kvs_event_s signal_ev;
+    
 
     int role; // master/slave
 };
 
 
 
-struct kvs_server_s *kvs_server_create(struct kvs_proactor_s *proactor_pt, struct kvs_server_config_s *config_pt);
-void kvs_server_destroy(struct kvs_server_s *server);
+int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *config_pt);
+int kvs_server_deinit(struct kvs_server_s *server);
 
 /*
 * @return: command processing result code defined in enum KVS_RESPONSE_CODE

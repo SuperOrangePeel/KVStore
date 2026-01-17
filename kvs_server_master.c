@@ -1,11 +1,9 @@
 #include "kvs_server.h"
 
 #include "kvs_persistence.h"
-#include "kvs_proactor.h"
 #include "kvs_types.h"
 #include "common.h"
-
-#include "kvs_proactor.h"
+#include "kvs_network.h"
 #include "logger.h"
 
 #include <assert.h>
@@ -191,7 +189,7 @@ kvs_status_t kvs_master_slave_sync_tick(struct kvs_master_s *master, struct kvs_
             // check if RDB save is finished
             if(master->server->rdb_child_pid > 0) {
                 // still saving RDB
-                kvs_proactor_set_recv_event(conn);
+                kvs_net_set_recv_event(conn);
                 break;
             } else {
                 // RDB save finished
@@ -227,7 +225,7 @@ kvs_status_t kvs_master_slave_sync_tick(struct kvs_master_s *master, struct kvs_
 			} else {
 				*rdb_offset += pret;
 				conn->w_idx = pret;
-				kvs_proactor_set_send_event_manual(conn);
+				kvs_net_set_send_event_manual(conn);
 			}
 			break;
 		case CONN_STATE_SLAVE_SEND_REPL:
@@ -246,7 +244,7 @@ SLAVE_SEND_REPL_LABEL:
                 LOG_DEBUG("[slave state SEND REPL] slave fd: %d, repl_backlog_offset: %zu\n", conn->_internal.fd, *repl_backlog_offset);
 				if(*repl_backlog_offset < master->repl_backlog_idx) {
 					size_t remaining = master->repl_backlog_idx - *repl_backlog_offset;
-					kvs_proactor_set_send_event_raw_buffer(conn, master->repl_backlog + *repl_backlog_offset, remaining);
+					kvs_net_set_send_event_raw_buffer(conn, master->repl_backlog + *repl_backlog_offset, remaining);
 					break;
 				} else {
 					// finish sending replication backlog
@@ -272,12 +270,12 @@ SLAVE_SEND_REPL_LABEL:
             slave_ctx->slave_idx = master->slave_count;
 			master->slave_count ++ ;
 			LOG_DEBUG("new slave [fd:%d] connected, total slave count: %d\n", conn->_internal.fd, master->slave_count);
-			kvs_proactor_set_recv_event(conn);
+			kvs_net_set_recv_event(conn);
 		}
 			break;
 		case CONN_STATE_SLAVE_ONLINE:
             // normal online state
-			kvs_proactor_set_recv_event(conn);
+			kvs_net_set_recv_event(conn);
 			break;
 		default:
 			LOG_FATAL("invalid connection state: %d\n", *slave_state);

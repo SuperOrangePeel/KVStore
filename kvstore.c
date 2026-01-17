@@ -1,13 +1,17 @@
 #include "kvs_server.h"
-#include "kvs_proactor.h"
+//#include "kvs_proactor.h"
 #include "kvs_handler.h"
 #include "kvs_config.h"
 #include "logger.h"
+#include "kvs_network.h"
+
 
 #include <string.h>
 #include <stdio.h>
 
-struct kvs_server_s *global_server = NULL;
+//struct kvs_server_s *global_server = NULL;
+
+struct kvs_server_s global_server;
 
 int main(int argc, char *argv[]) {
 
@@ -25,24 +29,24 @@ int main(int argc, char *argv[]) {
     //     return -1;
     // }
 
-
     int port = atoi(argv[1]);
 
-    struct kvs_proactor_s proactor;
-    memset(&proactor, 0, sizeof(proactor));
-    struct kvs_proactor_options_s proactor_options = {
-        .conn_max = 32,
-        .global_ctx = (void*)&global_server,  // link to server
-        .port = port,
+    
+    struct kvs_network_config_s net_conf = {
+        .port_listen = port,
+        .max_conns = KVS_MAX_CONNECTS,
+        .io_uring_entries = 1024,
+        .read_buffer_size = 1048576,
+        .write_buffer_size = 1048576, // 1MB
         .on_accept = kvs_handler_on_accept,
         .on_msg = kvs_handler_on_msg,
         .on_send = kvs_handler_on_send,
         .on_close = kvs_handler_on_close,
-        .on_timer = kvs_handler_on_timer,
-        .read_buffer_size = 4096,
-        .write_buffer_size = 1048576, // 1MB
+        .server_ctx = (void*)&global_server,
     };
-    kvs_proactor_init(&proactor, &proactor_options);
+
+    kvs_net_init(&global_server.network, &net_conf);
+    //kvs_proactor_init(&proactor, &proactor_options);
 
 	if(argc == 2) {
 		struct kvs_server_config_s server_config = {
@@ -54,11 +58,11 @@ int main(int argc, char *argv[]) {
             .pers_config.rdb_filename = "dump.rdb",
         };
 
-        global_server = kvs_server_create(&proactor, &server_config);
+        kvs_server_init(&global_server, &server_config);
         LOG_DEBUG("kvs_server create");
-        kvs_server_storage_recovery(global_server, kvs_handler_process_raw_buffer); // recovery from AOF/RDB
+        kvs_server_storage_recovery(&global_server, kvs_handler_process_raw_buffer); // recovery from AOF/RDB
 
-        kvs_proactor_start(&proactor);
+        kvs_net_start(&global_server.network);
 
 	} else if(argc == 5 && strcmp(argv[2], "slave") == 0){
         const char *master_ip = argv[3];
@@ -74,7 +78,7 @@ int main(int argc, char *argv[]) {
 
         printf("Start as slave, master %s:%d\n", master_ip, master_port);
 
-	    global_server = kvs_server_create(&proactor, &server_config);
+	    kvs_server_init(&global_server, &server_config);
         // slave no need to recovery from AOF/RDB
 		
 		//kvs_handler_register_master(&global_server->conns[master_fd], master_fd, global_server);
@@ -83,7 +87,7 @@ int main(int argc, char *argv[]) {
 		// slave then will recv the replication commands from master
 		//printf("RDB sync from master completed.\n");
 			
-		kvs_proactor_start(&proactor);
+		kvs_net_start(&global_server.network);
 	}
     // #if (NETWORK_SELECT == NETWORK_REACTOR)
 	// 		reactor_start(port, kvs_handler_on_msg);  //
@@ -96,8 +100,8 @@ int main(int argc, char *argv[]) {
     
 
 	printf("args error\n");
-	kvs_proactor_deinit(&proactor);
-	kvs_server_destroy(global_server);
+	kvs_net_deinit(&global_server.network);
+    kvs_server_deinit(&global_server);
 
 	return 0;
 

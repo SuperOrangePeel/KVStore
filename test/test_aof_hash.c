@@ -36,8 +36,11 @@ int format_hset(char *buf, int i) {
     sprintf(key, "key:%07d", i);
     reverse_string(key);
     sprintf(val, "value_content_%07d", i);
-    return sprintf(buf, "*3\r\n$4\r\nHSET\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
+    
+    int ret = sprintf(buf, "*3\r\n$4\r\nHSET\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
                    strlen(key), key, strlen(val), val);
+    //rintf("format_hset ret:%d\n", ret);
+    return ret;
 }
 
 // 构造 HGET 指令

@@ -1,4 +1,5 @@
 #include "kvs_handler.h"
+#include "kvs_network.h"
 
 #include "kvs_persistence.h"
 #include "kvs_server.h"
@@ -7,7 +8,7 @@
 #include "kvs_hash.h"
 #include "kvs_rbtree.h"
 
-#include "kvs_proactor.h"
+
 #include "kvs_resp_protocol.h"
 #include "kvs_executor.h"
 #include "common.h"
@@ -31,28 +32,29 @@ kvs_status_t _kvs_handler_format_response(int result, char *value, int len_val, 
 	if(conn == NULL) return KVS_ERR;
 	switch(result) {
 		case KVS_RES_OK:
-			kvs_proactor_set_send_event(conn, "+OK\r\n", 5);
+			//kvs_proactor_set_send_event(conn, "+OK\r\n", 5);
+			kvs_net_copy_msg_to_send_buf(conn, "+OK\r\n", 5);
 			break;
 		case KVS_RES_EXIST:
-			kvs_proactor_set_send_event(conn, "-EXIST\r\n", 9);
+			kvs_net_copy_msg_to_send_buf(conn, "-EXIST\r\n", 9);
 			break;
 		case KVS_RES_NOT_FOUND:
-			kvs_proactor_set_send_event(conn, "-NOT FOUND\r\n", 13);
+			kvs_net_copy_msg_to_send_buf(conn, "-NOT FOUND\r\n", 13);
 			break;
 		case KVS_RES_VAL: {
 			if(value == NULL || len_val <= 0) {
-				kvs_proactor_set_send_event(conn, "-ERROR\r\n", 8);
+				kvs_net_copy_msg_to_send_buf(conn, "-ERROR\r\n", 8);
 				break;
 			}
 			char header[64];
 			int header_len = snprintf(header, sizeof(header), "$%d\r\n", len_val);
-			kvs_proactor_set_send_event(conn, header, header_len);
-			kvs_proactor_set_send_event(conn, value, len_val);
-			kvs_proactor_set_send_event(conn, "\r\n", 2);
+			kvs_net_copy_msg_to_send_buf(conn, header, header_len);
+			kvs_net_copy_msg_to_send_buf(conn, value, len_val);
+			kvs_net_copy_msg_to_send_buf(conn, "\r\n", 2);
 			break;
 		}
 		case KVS_RES_UNKNOWN_CMD:
-			kvs_proactor_set_send_event(conn, "-ERR unknown command\r\n", 22);
+			kvs_net_copy_msg_to_send_buf(conn, "-ERR unknown command\r\n", 22);
 			break;
 		default:
 			LOG_FATAL("unknown result code: %d", result);
@@ -62,11 +64,12 @@ kvs_status_t _kvs_handler_format_response(int result, char *value, int len_val, 
 	return KVS_OK;
 }
 
-int kvs_handler_on_msg(struct kvs_conn_s *conn) {
+int kvs_handler_on_msg(struct kvs_conn_s *conn, int *read_size) {
 	if(conn == NULL) return KVS_ERR;
 	struct kvs_handler_cmd_s cmd;
 	//LOG_DEBUG("connfd:%d", conn->_internal.fd);
-	struct kvs_server_s* server = *(struct kvs_server_s**)conn->global_ctx;
+	//LOG_DEBUG("received data: %d", conn->r_idx);
+	struct kvs_server_s* server = (struct kvs_server_s*)conn->server_ctx;
 	struct kvs_ctx_header_s* ctx_header = (struct kvs_ctx_header_s*)conn->bussiness_ctx;
 	if(server == NULL || ctx_header == NULL) {
 		if(server == NULL)
@@ -96,21 +99,22 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn) {
 	int parsed_length_once = 0;
 	int parsed_total_length = 0;
 	kvs_result_t result = 0;
+	int msg_len = conn->r_idx;// can not change r_idx in this function
+	char *msg = conn->r_buffer;
+
 	while(parsed_total_length < conn->r_idx) {
 		//LOG_DEBUG("parsed_total_length:%d, conn->r_idx:%d", parsed_total_length, conn->r_idx);
 		//LOG_DEBUG("received data: %.*s", conn->r_idx, conn->r_buffer);
 		memset(&cmd, 0, sizeof(struct kvs_handler_cmd_s));
-		char *msg = conn->r_buffer;
-		int length = conn->r_idx;// can not change r_idx in this function
-		char *response = conn->w_buffer;
-		int rsp_buf_len = conn->w_buf_sz;
-		int* length_r = &conn->w_idx; // w_idx should be the length of response after processing
-
+		
 		parsed_length_once = 0;
 		kvs_status_t status = kvs_protocol(msg + parsed_total_length, 
-			length - parsed_total_length, &cmd, &parsed_length_once);
+			msg_len - parsed_total_length, &cmd, &parsed_length_once);
 		if(status == KVS_ERR) {
+			//LOG_DEBUG("msg: [%.*s], msg length: %d", msg_len, msg, msg_len);
+			LOG_DEBUG("parsed_total:%d", parsed_total_length);
 			LOG_ERROR("protocol parse error");
+			assert(0);
 			return KVS_ERR;
 		} else if(status == KVS_AGAIN) {
 			//LOG_DEBUG("need more data");
@@ -127,9 +131,11 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn) {
 				assert(0);
 			}
 		}
+		parsed_total_length += parsed_length_once;
 		
 
 		if(ctx_header->type == KVS_CTX_MASTER_OF_ME) {
+
 			// master connection
 			continue;
 		}
@@ -158,9 +164,14 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn) {
 
 		//LOG_DEBUG("parsed_total_length:%d, conn->r_idx:%d", parsed_total_length, conn->r_idx);
 		_kvs_handler_format_response(result, cmd.val, cmd.len_val	, conn);
-		parsed_total_length += parsed_length_once;
+		
+		//kvs_net_set_send_event_manual(conn);
 	}
-	return parsed_total_length;
+	//LOG_DEBUG("read_size:%d", parsed_total_length);
+	*read_size = parsed_total_length;
+	kvs_net_set_send_event_manual(conn);
+	//LOG_DEBUG("total parsed length:%d", parsed_total_length);
+	return 0;
 }
 
 
@@ -180,10 +191,10 @@ int kvs_handler_on_send(struct kvs_conn_s *conn, int bytes_sent) {
 	} else if(ctx_header->type == KVS_CTX_MASTER_OF_ME) {
 		// master connection
 		// do nothing, just set recv event
-		kvs_proactor_set_recv_event(conn);
+		kvs_net_set_recv_event(conn);
 	} else {
 		// normal client
-		kvs_proactor_set_recv_event(conn);
+		kvs_net_set_recv_event(conn);
 	}
 
 	return 0;
@@ -192,7 +203,7 @@ int kvs_handler_on_send(struct kvs_conn_s *conn, int bytes_sent) {
 
 int kvs_handler_on_accept(struct kvs_conn_s *conn) {
 	if(conn == NULL) return KVS_ERR;
-	struct kvs_server_s* server = *(struct kvs_server_s**)conn->global_ctx;
+	struct kvs_server_s* server = (struct kvs_server_s*)conn->server_ctx;
 	if(server == NULL) {
 		LOG_FATAL("server is NULL");
 		assert(0);
@@ -200,6 +211,7 @@ int kvs_handler_on_accept(struct kvs_conn_s *conn) {
 	}
 	kvs_server_init_connection(server, conn);
 
+	//kvs_net_set_recv_event(conn);
 	return 0;
 }
 
@@ -207,7 +219,7 @@ int kvs_handler_on_accept(struct kvs_conn_s *conn) {
 
 int kvs_handler_on_close(struct kvs_conn_s *conn) {
 	if(conn == NULL) return -1;
-	struct kvs_server_s* server = *(struct kvs_server_s**)conn->global_ctx;
+	struct kvs_server_s* server = (struct kvs_server_s*)conn->server_ctx;
 	if(server == NULL) {
 		LOG_FATAL("server is NULL");
 		assert(0);

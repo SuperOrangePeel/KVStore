@@ -1,6 +1,7 @@
 #include "kvs_resp_protocol.h"
 #include "kvs_types.h"
 #include "common.h"
+#include "logger.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -48,18 +49,29 @@ const int command_length[] = {
 
 
 kvs_status_t kvs_protocol(char* msg, int length, struct kvs_handler_cmd_s *cmd_pt, int *parsed_length) {
-    if(cmd_pt == NULL || msg == NULL || length <= 0 || parsed_length == NULL /*|| idx < 0*/) return KVS_ERR;
+    if(cmd_pt == NULL || msg == NULL || length <= 0 || parsed_length == NULL /*|| idx < 0*/)  {
+		LOG_DEBUG("invalid argument");
+		return KVS_ERR;
+	}
 	int idx = 0;
-	if(msg[idx] != '*') return KVS_ERR;
+	if(length < 3) return KVS_AGAIN; // at least "*1\r\n$3\r\n"
+	if(msg[idx] != '*') {
+		LOG_ERROR("msg[0]: %c, length: %d", msg[0], length);
+		LOG_DEBUG("invalid protocol: no '*'");
+		return KVS_ERR;
+	}
 	cmd_pt->raw_ptr = &msg[idx];
 	int idx_bk = idx;
 	//printf("%s:%d command parsering\n", __FILE__, __LINE__);
 	idx ++ ;
-
+	
 	int len_arr = kvs_parse_int(msg, length, &idx);
 	//printf("len_arr: %d idx:%d length:%d\n", len_arr, idx, length);
 	if(idx + 1 >= length) return KVS_AGAIN;
-	if(msg[idx] != '\r' || msg[idx + 1] != '\n') return KVS_ERR;
+	if(msg[idx] != '\r' || msg[idx + 1] != '\n') {
+		LOG_DEBUG("invalid protocol: no \\r\\n after array length");
+		return KVS_ERR;
+	} 
 	idx += 2;
 	//printf("%s:%d command parsering\n", __FILE__, __LINE__);
 	int i = 0;

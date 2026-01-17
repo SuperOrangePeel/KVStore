@@ -1,7 +1,7 @@
 #include "kvs_server.h"
 #include "kvs_array.h"
 #include "kvs_hash.h"
-#include "kvs_proactor.h"
+#include "kvs_network.h"
 #include "kvs_rbtree.h"
 #include "kvs_persistence.h"
 // #include "kvs_handler.h" // decoupling
@@ -14,30 +14,31 @@
 #include <unistd.h> 
 #include <assert.h>
 #include <fcntl.h>
-
+#include <sys/signalfd.h>
+#include <signal.h>
 
 
 
 // struct kvs_server_s *global_server = NULL;
 
 int kvs_server_register_master(struct kvs_server_s *server, int master_fd) {
-	struct kvs_conn_s *conn = kvs_proactor_register_fd(server->proactor, master_fd);
-	kvs_proactor_set_recv_event(conn);
+	struct kvs_conn_s *conn = NULL;
+	int ret = kvs_net_resigster_fd(&server->network, master_fd, &conn);
+	if(ret < 0 || conn == NULL) {
+		return -1;
+	}
+	kvs_net_set_recv_event(conn);
 	return 0;
 }
 
-struct kvs_server_s *kvs_server_create(struct kvs_proactor_s *proactor_pt, struct kvs_server_config_s *config_pt) {
-	if(proactor_pt == NULL || config_pt == NULL) {
-		return NULL;
+int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *config_pt) {
+	if(server ==NULL || config_pt == NULL) {
+		return -1;
 	}
 	kvs_global_mempool_init(); // init global mempool first
 
 	//1. init server struct
-    struct kvs_server_s *server = (struct kvs_server_s *)kvs_malloc(sizeof(struct kvs_server_s));
-	if(server == NULL) {
-		return NULL;
-	}
-	memset(server, 0, sizeof(struct kvs_server_s));
+	//memset(server, 0, sizeof(struct kvs_server_s));
 
 	//2. init persistence context
     server->pers_ctx = kvs_persistence_create(&config_pt->pers_config);
@@ -50,10 +51,6 @@ struct kvs_server_s *kvs_server_create(struct kvs_proactor_s *proactor_pt, struc
 	}
 	server->hash = kvs_hash_create(KVS_MAX_HASH_SIZE);
 	server->rbtree = kvs_rbtree_create();
-	
-	//printf("AOF recovery completed.\n");
-
-    server->proactor = proactor_pt;
 
 	// 4. init master/slave according to config
 	if(config_pt->role & KVS_SERVER_ROLE_MASTER) {
@@ -81,13 +78,13 @@ struct kvs_server_s *kvs_server_create(struct kvs_proactor_s *proactor_pt, struc
 	}
 	
 	// 5. init other components if needed
-    return server;
+    return 0;
 }
 
 
-void kvs_server_destroy(struct kvs_server_s *server) {
+int kvs_server_deinit(struct kvs_server_s *server) {
 	if(server == NULL) {
-		return;
+		return -1;
 	}
 	if(server->pers_ctx) {
 		kvs_persistence_destroy(server->pers_ctx);
@@ -119,9 +116,8 @@ void kvs_server_destroy(struct kvs_server_s *server) {
 		server->slave = NULL;
 	}
 
-	kvs_free(server, sizeof(struct kvs_server_s));
-
 	kvs_global_mempool_destroy(); // destroy global mempool
+	return 0;
 }
 
 
@@ -322,7 +318,7 @@ kvs_status_t kvs_server_init_connection(struct kvs_server_s *server, struct kvs_
 		return -1;
 	}
 	
-	LOG_DEBUG("%s:%d new connection accepted, fd: %d\n", __FILE__, __LINE__, conn->_internal.fd);
+	LOG_DEBUG("%s:%d new connection accepted, fd: %d", __FILE__, __LINE__, conn->_internal.fd);
 	conn->bussiness_ctx = kvs_malloc(sizeof(struct kvs_ctx_header_s));
 	if(conn->bussiness_ctx == NULL) {
 		LOG_FATAL("malloc ctx_header failed");

@@ -5,12 +5,13 @@
 #include <string.h>
 
 int kvs_loop_init(kvs_loop_t *loop, int entries) {
+    printf("kvs_loop_init: entries=%d\n", entries);
     memset(loop, 0, sizeof(*loop));
     // IORING_SETUP_SQPOLL 可以进一步减少系统调用，但需要 root 权限，暂时不用
-    if (io_uring_queue_init(entries, &loop->ring, 0) < 0) {
-        perror("io_uring_queue_init");
-        return -1;
-    }
+    struct io_uring_params params;
+	memset(&params, 0, sizeof(params));
+	io_uring_queue_init_params(entries, &loop->ring, &params);
+
     return 0;
 }
 
@@ -31,15 +32,17 @@ void kvs_loop_run(kvs_loop_t *loop) {
         // 【关键点】：Submit and Wait
         // 这一步会把上一轮回调中所有 add_read/write 产生的 SQE 一次性提交 (Batch Submit)
         // 并阻塞等待至少 1 个完成事件
+        //printf("kvs_loop_run: submitting and waiting\n");
         int ret = io_uring_submit_and_wait(&loop->ring, 1);
         if (ret < 0) {
             if (errno == EINTR) continue;
             perror("io_uring_submit_and_wait");
             break; // Fatal error
         }
-
+        int count = 0;
         // 批量处理完成队列 (Batch Process CQ)
         io_uring_for_each_cqe(&loop->ring, head, cqe) {
+            count ++;
             kvs_event_t *ev = (kvs_event_t *)io_uring_cqe_get_data(cqe);
             
             if (ev && ev->handler) {
@@ -50,9 +53,10 @@ void kvs_loop_run(kvs_loop_t *loop) {
             
             // 标记 CQE 已处理，暂不通知内核，等一圈处理完统一 advance
         }
-        
+        //printf("kvs_loop_run: processed %d completions\n", count);
         // 告诉内核我们处理了一批 CQE
-        io_uring_cq_advance(&loop->ring, 0); 
+        io_uring_cq_advance(&loop->ring, count);
+        //io_uring_cq_advance(&loop->ring, 0); 
         // advance 0 是因为 liburing 的 for_each 宏配合 cq_advance 可能会有版本差异
         // 标准做法是：io_uring_cqe_seen 内部已经调了 advance。
         // 所以上面的 for_each 里应该用 io_uring_cqe_seen(&loop->ring, cqe);
@@ -89,34 +93,33 @@ int kvs_loop_add_accept(kvs_loop_t *loop, kvs_event_t *ev, struct sockaddr *addr
     return 0;
 }
 
-int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev) {
+int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len) {
     struct io_uring_sqe *sqe = get_sqe_safe(loop);
     if (!sqe) return -1;
-
-    // 使用 ev 内部缓存的指针和长度
-    io_uring_prep_recv(sqe, ev->fd, ev->buf, ev->len, 0);
+    
+    io_uring_prep_recv(sqe, ev->fd, buf, len, 0);
     io_uring_sqe_set_data(sqe, ev);
     return 0;
 }
 
-int kvs_loop_add_read_buffer(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
-    struct io_uring_sqe *sqe = get_sqe_safe(loop);
-    if (!sqe) return -1;
+// int kvs_loop_add_read_buffer(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
+//     struct io_uring_sqe *sqe = get_sqe_safe(loop);
+//     if (!sqe) return -1;
 
-    // 显式指定 buffer (用于 signalfd read)
-    io_uring_prep_read(sqe, ev->fd, buf, len, 0);
-    io_uring_sqe_set_data(sqe, ev);
-    return 0;
-}
+//     // 显式指定 buffer (用于 signalfd read)
+//     io_uring_prep_read(sqe, ev->fd, buf, len, 0);
+//     io_uring_sqe_set_data(sqe, ev);
+//     return 0;
+// }
 
-int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev) {
-    struct io_uring_sqe *sqe = get_sqe_safe(loop);
-    if (!sqe) return -1;
+// int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev) {
+//     struct io_uring_sqe *sqe = get_sqe_safe(loop);
+//     if (!sqe) return -1;
 
-    io_uring_prep_send(sqe, ev->fd, ev->buf, ev->len, 0);
-    io_uring_sqe_set_data(sqe, ev);
-    return 0;
-}
+//     io_uring_prep_send(sqe, ev->fd, ev->buf, ev->len, 0);
+//     io_uring_sqe_set_data(sqe, ev);
+//     return 0;
+// }
 
 int kvs_loop_add_write_raw(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
     struct io_uring_sqe *sqe = get_sqe_safe(loop);
@@ -134,4 +137,11 @@ int kvs_loop_add_timeout(kvs_loop_t *loop, kvs_event_t *ev, struct __kernel_time
     io_uring_prep_timeout(sqe, ts, 0, 0);
     io_uring_sqe_set_data(sqe, ev);
     return 0;
+}
+
+void kvs_loop_cancel_event(kvs_loop_t *loop, kvs_event_t *ev) {
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&loop->ring);
+    // 撤销 user_data 匹配的所有请求
+    io_uring_prep_cancel(sqe, ev, 0); 
+    io_uring_submit(&loop->ring);
 }
