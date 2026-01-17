@@ -1,7 +1,7 @@
 
 CC = gcc
-FLAGS = -I ./NtyCo/core/ -L ./NtyCo/ -lntyco -lpthread -luring -ldl -g -O3 # -ljemalloc
-SRCS = $(wildcard *.c)
+FLAGS = -I ./NtyCo/core/ -L ./NtyCo/ -lntyco -lpthread -luring -ldl -g -O3  -I deps/tomlc99# -ljemalloc
+SRCS = $(wildcard *.c) deps/tomlc99/toml.c
 TARGET = kvstore
 SUBDIRS = ./NtyCo/ ./test
 OBJS = $(SRCS:.c=.o)

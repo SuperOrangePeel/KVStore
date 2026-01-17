@@ -501,18 +501,24 @@ int kvs_hash_resp_exist(kvs_hash_t *hash, char* key, int len_key) {
 }
 
 
-
-void kvs_hash_filter(kvs_hash_t *hash, kvs_hash_item_filter filter, void *arg) {
-	if(!hash || !filter) return;
-
+/*
+ * @return 0 if success, -1 if error
+ */
+int kvs_hash_filter(kvs_hash_t *hash, kvs_hash_item_filter filter, void *arg) {
+	if(!hash || !filter) return -1;
+	int ret = 0;
 	int i = 0;
 	for(i = 0; i < hash->max_slots; ++ i) {
 		hashnode_t *node = hash->nodes[i];
 		while(node != NULL) {
-			filter(node->key, node->len_key, node->value, node->len_val, arg);
+			ret = filter(node->key, node->len_key, node->value, node->len_val, arg);
+			if(ret < 0) {
+				return -1;
+			}
 			node = node->next;
 		}
 	}
+	return 0;
 }
 
 #if 0

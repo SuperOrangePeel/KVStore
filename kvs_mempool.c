@@ -154,6 +154,7 @@ void* kvs_mempool_alloc(kvs_mp_pool_t *pool, size_t size) {
 
 
 void kvs_mempool_free(kvs_mp_pool_t *pool, void *p, size_t size) {
+    if(p == NULL) return;
     if(size > KVS_MP_MAX_ALLOC_FROM_POOL) {
         free(p);
         return;

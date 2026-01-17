@@ -139,7 +139,6 @@ int kvs_array_del(kvs_array_t *inst, char *key) {
 /*
  * @return : < 0, error; =0, success; >0, no exist 
  */
-
 int kvs_array_mod(kvs_array_t *inst, char *key, char *value) {
 
 	if (inst == NULL || key == NULL || value == NULL) return -1;
@@ -190,9 +189,9 @@ int kvs_array_exist(kvs_array_t *inst, char *key) {
 	return 0;
 }
 
-/*
- *@return >=0 success -1 error -2 exist;
- */
+/**
+ * @return int >=0 success -1 error -2 exist;
+ */ 
 int kvs_array_resp_set(kvs_array_t *inst, char *key, int len_key, char *value, int len_val) {
 	if (inst == NULL || key == NULL || len_key <= 0|| value == NULL || len_val <= 0) return -1;
 	//printf("kvs_array_resp_set called\n");
@@ -242,8 +241,9 @@ int kvs_array_resp_set(kvs_array_t *inst, char *key, int len_key, char *value, i
 	return i;
 }
 
-/*
- *@return >=0 success -1 error -2 not exist
+
+/**
+ * @return int >=0 success -1 error -2 not exist
  */
 int kvs_array_resp_get(kvs_array_t *inst, char *key, int len_key, char **value, int *len_val) {
 
@@ -329,12 +329,17 @@ int kvs_array_resp_exist(kvs_array_t *inst, char* key, int len_key) {
 	return -2;
 }
 
-void kvs_array_filter(kvs_array_t *inst, kvs_array_item_filter filter, void* filter_ctx) {
-	if(!inst || !filter) return;
+int kvs_array_filter(kvs_array_t *inst, kvs_array_item_filter filter, void* filter_ctx) {
+	if(!inst || !filter) return -1;
 	int i = 0;
+	int ret = 0;
 	for(i = 0; i < inst->total; ++ i) {
 		if(inst->table[i].key != NULL) {
-			filter(inst->table[i].key, inst->table[i].len_key, inst->table[i].value, inst->table[i].len_val, filter_ctx);
+			ret = filter(inst->table[i].key, inst->table[i].len_key, inst->table[i].value, inst->table[i].len_val, filter_ctx);
+			if(ret < 0) {
+				return -1;
+			}
 		}
 	}
+	return 0;
 }

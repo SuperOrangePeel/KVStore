@@ -10,7 +10,7 @@ typedef struct kvs_array_item_s {
 //#endif 
 } kvs_array_item_t;
 
-#define KVS_ARRAY_SIZE		1024
+#define KVS_ARRAY_SIZE		1048576//1024
 
 typedef struct kvs_array_s {
 	kvs_array_item_t *table;
@@ -28,14 +28,13 @@ int kvs_array_mod(kvs_array_t *inst, char *key, char *value);
 int kvs_array_exist(kvs_array_t *inst, char *key);
 
 
-
 int kvs_array_resp_set(kvs_array_t *inst, char *key, int len_key, char *value, int len_val);
 int kvs_array_resp_get(kvs_array_t *inst, char *key, int len_key, char **value, int *len_val);
 int kvs_array_resp_del(kvs_array_t *inst, char *key, int len_key);
 int kvs_array_resp_mod(kvs_array_t *inst, char *key, int len_key, char *value, int len_val);
 int kvs_array_resp_exist(kvs_array_t *inst, char* key, int len_key);
 
-typedef void(*kvs_array_item_filter)(char *key, int len_key, char *value, int len_val, void* arg);
-void kvs_array_filter(kvs_array_t *inst, kvs_array_item_filter filter, void* filter_ctx);
+typedef int(*kvs_array_item_filter)(char *key, int len_key, char *value, int len_val, void* arg);
+int kvs_array_filter(kvs_array_t *inst, kvs_array_item_filter filter, void* filter_ctx);
 
 #endif

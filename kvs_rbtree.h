@@ -47,7 +47,7 @@ int kvs_rbtree_resp_del(kvs_rbtree_t *inst, char *key, int len_key);
 int kvs_rbtree_resp_mod(kvs_rbtree_t *inst, char *key, int len_key, char *value, int len_val);
 int kvs_rbtree_resp_exist(kvs_rbtree_t *inst, char *key, int len_key);
 
-typedef void(*kvs_rbtree_item_filter)(char *key, int len_key, char *value, int len_val, void* arg);
+typedef int(*kvs_rbtree_item_filter)(char *key, int len_key, char *value, int len_val, void* arg);
 int kvs_rbtree_filter(kvs_rbtree_t *inst, kvs_rbtree_item_filter filter, void* filter_ctx);
 
 #endif

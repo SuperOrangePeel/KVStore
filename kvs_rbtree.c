@@ -669,7 +669,8 @@ int kvs_rbtree_filter(kvs_rbtree_t *inst, kvs_rbtree_item_filter filter, void* f
 	if (inst->root == inst->nil) return 0; // empty
 	rbtree_node *node = rbtree_mini(inst, inst->root);
 	while (node != inst->nil) {
-		filter(node->key, node->len_key, node->value, node->len_val, filter_ctx);
+		if(0 > filter(node->key, node->len_key, node->value, node->len_val, filter_ctx))
+			return -1;
 		node = rbtree_successor(inst, node);
 	}
 

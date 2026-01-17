@@ -14,14 +14,18 @@
 #include <assert.h>
 
 
-kvs_pers_context_t kvs_aof_ctx = {0}; // global context
+struct kvs_pers_context_s kvs_aof_ctx = {0}; // global context
 
-kvs_pers_context_t *kvs_persistence_create(char* aof_filename, char* rdb_filename) {
-    if(aof_filename == NULL || rdb_filename == NULL) {
+struct kvs_pers_context_s * kvs_persistence_create(struct kvs_pers_config_s *config) {
+    if(config == NULL) {
         return NULL;
     }
+    char* aof_filename = config->aof_filename ? config->aof_filename : "kvstore.aof";
+    char* rdb_filename = config->rdb_filename ? config->rdb_filename : "dump.rdb";
 
-    kvs_pers_context_t *ctx = (kvs_pers_context_t *)kvs_malloc(sizeof(kvs_pers_context_t));
+    struct kvs_pers_context_s *ctx = (struct kvs_pers_context_s *)kvs_malloc(sizeof(struct kvs_pers_context_s));
+    ctx->aof_enabled = config->aof_enabled; // 1: enabled, 0: disabled
+
     ctx->aof_filename = (char*)kvs_malloc(strlen(aof_filename) + 1);
     if(ctx->aof_filename == NULL) {
         return NULL;
@@ -50,7 +54,7 @@ kvs_pers_context_t *kvs_persistence_create(char* aof_filename, char* rdb_filenam
     return ctx;
 }
 
-int kvs_persistence_destroy(kvs_pers_context_t *ctx) {
+int kvs_persistence_destroy(struct kvs_pers_context_s *ctx) {
     if(ctx->aof_fd != -1) {
         close(ctx->aof_fd);
         ctx->aof_fd = -1;
@@ -59,12 +63,12 @@ int kvs_persistence_destroy(kvs_pers_context_t *ctx) {
     ctx->aof_filename = NULL;
     kvs_free(ctx->rdb_filename, strlen(ctx->rdb_filename) + 1);
     ctx->rdb_filename = NULL;
-    kvs_free(ctx, sizeof(kvs_pers_context_t));
+    kvs_free(ctx, sizeof(struct kvs_pers_context_s));
     return 0;
 }
 
 
-int kvs_persistence_write_aof(kvs_pers_context_t *ctx, char* data, size_t data_len) {
+int kvs_persistence_write_aof(struct kvs_pers_context_s *ctx, char* data, size_t data_len) {
     if(ctx == NULL || data == NULL || data_len == 0 || ctx->aof_filename == NULL) {
         return -1;
     }
@@ -106,7 +110,7 @@ int kvs_persistence_write_aof(kvs_pers_context_t *ctx, char* data, size_t data_l
     return 0;
 }
 
-int kvs_persistence_flush_aof(kvs_pers_context_t *ctx) {
+int kvs_persistence_flush_aof(struct kvs_pers_context_s *ctx) {
     if(ctx == NULL) {
         return -1;
     }
@@ -131,7 +135,7 @@ int kvs_persistence_flush_aof(kvs_pers_context_t *ctx) {
 * @param buffer: suggested size at least 4096 bytes or 64k bytes
 * @return number of bytes read, -1 on error
 */
-int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_aof_data_parser_cb data_parser, void* arg) {
+int kvs_persistence_load_aof(struct kvs_pers_context_s *aof_ctx, kvs_aof_data_parser_pt data_parser, void* arg) {
     if(!aof_ctx || !data_parser) return -1;
 
     int aof_fd = open(aof_ctx->aof_filename, O_RDWR);
@@ -156,16 +160,17 @@ int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_aof_data_parser_cb
         int p_idx = 0; // 当前缓冲区解析指针
         
         // 2. 内部循环解析：只要缓冲区里还有数据
+        int parsed_len;
         while (1) {
             //int cmd_len = 0; // 这是一个输出参数，由解析器告诉我们这条指令有多长
             
             // 注意：这里传入解析器的必须是起始位置和当前剩余的总长度
-            int ret = data_parser(f_buf + p_idx, total_in_buf - p_idx, arg);
+            int ret = data_parser(f_buf + p_idx, total_in_buf - p_idx, &parsed_len, arg);
 
             if (ret >= 0) { 
                 // 解析并执行成功
-                p_idx += ret;
-                total_valid_file_pos += ret;
+                p_idx += parsed_len;
+                total_valid_file_pos += parsed_len;
             } else {
                 // ret < 0 说明数据不完整（半条指令）或者格式错误
                 break; 
@@ -178,7 +183,7 @@ int kvs_persistence_load_aof(kvs_pers_context_t *aof_ctx, kvs_aof_data_parser_cb
             memmove(f_buf, f_buf + p_idx, leftover);
         }
 
-        // 4. 如果 read 返回 0，说明文件到底了
+        // 4. 如果 read 返回 0，说明文件到底了, 而且解析最后一次还有残留数据，说明格式错误
         if (n_read == 0) break;
     }
 
@@ -208,7 +213,8 @@ int _kvs_rdb_item_writer(char *data, int len, void* privdata) {
     return fwrite(data, 1, len, fp);
 }
 
-int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_storage_iterator_pt iterator, void* iter_arg) {
+
+int kvs_persistence_save_rdb(struct kvs_pers_context_s *ctx, kvs_storage_iterator_pt iterator, void* iter_arg) {
     // if(ctx->rdb_fp != NULL) {
     //     fclose(ctx->rdb_fp);
     //     ctx->rdb_fp = NULL;
@@ -237,18 +243,11 @@ int kvs_persistence_save_rdb(kvs_pers_context_t *ctx, kvs_storage_iterator_pt it
     return 0;
 }
 
-/*
- *@return 0 success -1 error -2 format error
-  */
-int kvs_persistence_load_rdb(kvs_pers_context_t *ctx, kvs_rdb_item_loader_pt loader, void* arg) {
-    if(ctx->rdb_filename == NULL) {
-        return -1;        
+int _kvs_persistence_load_rdb_filename(char* rdb_filename, kvs_rdb_item_loader_pt data_loader, void* arg) {
+    if(rdb_filename == NULL || data_loader == NULL) {
+        return -1;
     }
-    // if(ctx->rdb_fp == NULL) {
-    //     ctx->rdb_fp = fopen(ctx->rdb_filename, "rb");
-    // }
-
-    FILE* fp = fopen(ctx->rdb_filename, "rb");
+    FILE* fp = fopen(rdb_filename, "rb");
     if(fp == NULL) {
         return -1;
     }
@@ -258,7 +257,7 @@ int kvs_persistence_load_rdb(kvs_pers_context_t *ctx, kvs_rdb_item_loader_pt loa
     while(1) {
         size_t n_read = fread(rdb_buf + rdb_buf_idx, 1, rdb_buf_size - rdb_buf_idx, fp);
         rdb_buf_idx += n_read;
-        int processed_bytes = loader(rdb_buf, rdb_buf_idx, arg);
+        int processed_bytes = data_loader(rdb_buf, rdb_buf_idx, arg);
         if(processed_bytes < 0) {
             fclose(fp);
             return -2;
@@ -290,11 +289,26 @@ int kvs_persistence_load_rdb(kvs_pers_context_t *ctx, kvs_rdb_item_loader_pt loa
     return 0;
 }
 
-// int kvs_array_persistence_full(kvs_array_t *inst, char* filename) {
-//     if(inst == NULL || filename == NULL) {
-//         return -1;
-//     }
-//     int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-//     if(fd == -1) {
-//         return -1;
-//     }
+/*
+ *@return 0 success -1 error -2 format error
+  */
+int kvs_persistence_load_rdb(struct kvs_pers_context_s *ctx, kvs_rdb_item_loader_pt loader, void* arg) {
+    if(ctx->rdb_filename == NULL) {
+        return -1;        
+    }
+    // if(ctx->rdb_fp == NULL) {
+    //     ctx->rdb_fp = fopen(ctx->rdb_filename, "rb");
+    // }
+
+    return _kvs_persistence_load_rdb_filename(ctx->rdb_filename, loader, arg);
+    
+}
+
+int kvs_persistence_load_rdb_filename(char* rdb_filename, kvs_rdb_item_loader_pt data_loader, void* arg) {
+    if(rdb_filename == NULL || data_loader == NULL) {
+        return -1;
+    }
+    return _kvs_persistence_load_rdb_filename(rdb_filename, data_loader, arg);
+}
+
+

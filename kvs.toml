@@ -1,0 +1,19 @@
+# KVS Server Configuration
+
+[server]
+# bind_ip = "0.0.0.0"
+port = 2000
+max_slave_count = 32
+repl_backlog_size = 1024
+log_level = "debug"
+# io_uring_entries = 4096
+
+[persistence]
+aof_enabled = true
+aof_path = "./data/appendonly.aof"
+rdb_path = "./data/dump.rdb"
+
+[replication]
+# 如果是 Slave，取消注释下面两行
+# replicaof_ip = "127.0.0.1"
+# replicaof_port = 6380

@@ -1,5 +1,13 @@
 # 9.1 Kvstore
+## run
+```shell
+git clone https://github.com/cktan/tomlc99.git deps/tomlc99
+git clone https://github.com/wangbojing/NtyCo.git deps/ntyco
 
+make
+
+./kvstore 2000
+```
 
 ### 面试题
 1. 为什么会实现kvstore，使用场景在哪里？
@@ -110,3 +118,13 @@ jemalloc    | 2151554.65 qps | 335M VIRT | 246M RES
 ### iouring异步
 
 1. iouring在内核中是并行执行的
+
+README 电脑各项配置信息、虚拟机的系统版本 编译步骤，测试方案与可行性，性能数据
+
+实现配置文件，包含端口ip，日志级别，持久化方案，主从同步 等的配置，在配置文件中配置
+
+aof、rdb文件落盘用io_uring,加载持久化文件用mmap
+
+主从同步用ebpf
+
+发rdb文件，调研rdma实现。
