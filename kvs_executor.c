@@ -122,7 +122,19 @@ kvs_result_t _kvs_exec_save(struct kvs_server_s *server, struct kvs_handler_cmd_
     if(server == NULL || cmd == NULL) {
         return KVS_RES_ERR;
     }
-    return kvs_server_save_rdb(server);
+    if(KVS_OK == kvs_server_save_rdb_fork(server)) {
+        struct kvs_client_context_s* cli_ctx = (struct kvs_client_context_s*)conn->bussiness_ctx;
+        if(cli_ctx->header.type != KVS_CTX_NORMAL_CLIENT) {
+            LOG_FATAL("invalid ctx type: %d", cli_ctx->header.type);
+            assert(0);
+            return KVS_RES_ERR;
+        }
+        cli_ctx->state = KVS_CLIENT_STATE_WAIT_BGSAVE; // set client state to wait bgsave
+
+        return KVS_RES_RDB_SKIP_RESPONSE;
+    }
+    return KVS_RES_ERR;
+    //return kvs_server_save_rdb(server);
 }
 
 kvs_result_t _kvs_exec_slave_sync(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
@@ -130,7 +142,12 @@ kvs_result_t _kvs_exec_slave_sync(struct kvs_server_s *server, struct kvs_handle
         // todo : return more error info to slave 
         return KVS_RES_ERR;
     }
-    //kvs_server_change_connection_to_slave(server, conn);
+    kvs_server_convert_conn_type(server, conn, KVS_CTX_SLAVE_OF_ME);
+    struct kvs_repl_slave_context_s* slave_ctx = (struct kvs_repl_slave_context_s*)conn->bussiness_ctx;
+    slave_ctx->state = KVS_REPL_SLAVE_NONE;
+    kvs_master_slave_state_machine_tick(server->master, conn);
+
+    return KVS_RES_RDB_SKIP_RESPONSE;
     
 }
 

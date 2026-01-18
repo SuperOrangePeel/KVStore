@@ -16,6 +16,7 @@
 #include "kvs_server.h"
 #include "logger.h"
 #include "kvs_types.h"
+#include "kvs_response.h"
 
 #include <errno.h>
 #include <string.h>
@@ -28,41 +29,41 @@
 
 
 
-kvs_status_t _kvs_handler_format_response(int result, char *value, int len_val, struct kvs_conn_s *conn) {
-	if(conn == NULL) return KVS_ERR;
-	switch(result) {
-		case KVS_RES_OK:
-			//kvs_proactor_set_send_event(conn, "+OK\r\n", 5);
-			kvs_net_copy_msg_to_send_buf(conn, "+OK\r\n", 5);
-			break;
-		case KVS_RES_EXIST:
-			kvs_net_copy_msg_to_send_buf(conn, "-EXIST\r\n", 9);
-			break;
-		case KVS_RES_NOT_FOUND:
-			kvs_net_copy_msg_to_send_buf(conn, "-NOT FOUND\r\n", 13);
-			break;
-		case KVS_RES_VAL: {
-			if(value == NULL || len_val <= 0) {
-				kvs_net_copy_msg_to_send_buf(conn, "-ERROR\r\n", 8);
-				break;
-			}
-			char header[64];
-			int header_len = snprintf(header, sizeof(header), "$%d\r\n", len_val);
-			kvs_net_copy_msg_to_send_buf(conn, header, header_len);
-			kvs_net_copy_msg_to_send_buf(conn, value, len_val);
-			kvs_net_copy_msg_to_send_buf(conn, "\r\n", 2);
-			break;
-		}
-		case KVS_RES_UNKNOWN_CMD:
-			kvs_net_copy_msg_to_send_buf(conn, "-ERR unknown command\r\n", 22);
-			break;
-		default:
-			LOG_FATAL("unknown result code: %d", result);
-			assert(0);
+// kvs_status_t _kvs_handler_format_response(int result, char *value, int len_val, struct kvs_conn_s *conn) {
+// 	if(conn == NULL) return KVS_ERR;
+// 	switch(result) {
+// 		case KVS_RES_OK:
+// 			//kvs_proactor_set_send_event(conn, "+OK\r\n", 5);
+// 			kvs_net_copy_msg_to_send_buf(conn, "+OK\r\n", 5);
+// 			break;
+// 		case KVS_RES_EXIST:
+// 			kvs_net_copy_msg_to_send_buf(conn, "-EXIST\r\n", 9);
+// 			break;
+// 		case KVS_RES_NOT_FOUND:
+// 			kvs_net_copy_msg_to_send_buf(conn, "-NOT FOUND\r\n", 13);
+// 			break;
+// 		case KVS_RES_VAL: {
+// 			if(value == NULL || len_val <= 0) {
+// 				kvs_net_copy_msg_to_send_buf(conn, "-ERROR\r\n", 8);
+// 				break;
+// 			}
+// 			char header[64];
+// 			int header_len = snprintf(header, sizeof(header), "$%d\r\n", len_val);
+// 			kvs_net_copy_msg_to_send_buf(conn, header, header_len);
+// 			kvs_net_copy_msg_to_send_buf(conn, value, len_val);
+// 			kvs_net_copy_msg_to_send_buf(conn, "\r\n", 2);
+// 			break;
+// 		}
+// 		case KVS_RES_UNKNOWN_CMD:
+// 			kvs_net_copy_msg_to_send_buf(conn, "-ERR unknown command\r\n", 22);
+// 			break;
+// 		default:
+// 			LOG_FATAL("unknown result code: %d", result);
+// 			assert(0);
 			
-	}
-	return KVS_OK;
-}
+// 	}
+// 	return KVS_OK;
+// }
 
 int kvs_handler_on_msg(struct kvs_conn_s *conn, int *read_size) {
 	if(conn == NULL) return KVS_ERR;
@@ -80,7 +81,7 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn, int *read_size) {
 		return KVS_ERR;
 	}
 
-	struct kvs_master_slave_context_s* slave_ctx = NULL;
+	struct kvs_repl_slave_context_s* slave_ctx = NULL;
 	struct kvs_slave_master_context_s* master_ctx = NULL;
 	if(ctx_header->type == KVS_CTX_SLAVE_OF_ME) {
 	
@@ -132,38 +133,31 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn, int *read_size) {
 			}
 		}
 		parsed_total_length += parsed_length_once;
-		
+
+		if(result == KVS_RES_RDB_SKIP_RESPONSE){
+			continue;
+		}
 
 		if(ctx_header->type == KVS_CTX_MASTER_OF_ME) {
-
 			// master connection
 			continue;
 		}
 
-		if(server->pers_ctx->aof_enabled && cmd.cmd_type & KVS_CMD_WRITE) {
-			// append to AOF file
-			kvs_persistence_write_aof(server->pers_ctx, cmd.raw_ptr, cmd.raw_len);
+		if(cmd.cmd_type & KVS_CMD_WRITE) {
+
+			if(server->pers_ctx->aof_enabled) {
+				// append to AOF file
+				kvs_persistence_write_aof(server->pers_ctx, cmd.raw_ptr, cmd.raw_len);
+			}
+
+			
+			kvs_master_propagate_command_to_slaves(server->master, &cmd);
 		}
 		
-		
-		// if(result == KVS_RES_SYNC_SLAVE) {
-		// 	// special handling for SYNC command
-		// 	if(master_ctx == NULL) {
-		// 		LOG_ERROR("master_ctx is NULL for SYNC command");
-		// 		assert(0);
-		// 	}
-		// 	int ret = kvs_slave_start_sync_process(conn, server, master_ctx);
-		// 	if(ret < 0) {
-		// 		LOG_ERROR("start sync process failed");
-		// 		return KVS_ERR;
-		// 	}
-		// 	// after SYNC command, we do not need to send any response
-		// 	parsed_total_length += parsed_length_once;
-		// 	break; // exit the loop
-		// }
+
 
 		//LOG_DEBUG("parsed_total_length:%d, conn->r_idx:%d", parsed_total_length, conn->r_idx);
-		_kvs_handler_format_response(result, cmd.val, cmd.len_val	, conn);
+		kvs_format_response(result, cmd.val, cmd.len_val	, conn);
 		
 		//kvs_net_set_send_event_manual(conn);
 	}
@@ -180,14 +174,15 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn, int *read_size) {
 int kvs_handler_on_send(struct kvs_conn_s *conn, int bytes_sent) {
 	if(conn == NULL) return -1;
 	assert(conn->w_idx == 0);
-	
+	struct kvs_server_s* server = (struct kvs_server_s*)conn->server_ctx;
 	struct kvs_ctx_header_s* ctx_header = (struct kvs_ctx_header_s*)conn->bussiness_ctx;
 	if(ctx_header == NULL) {
 		LOG_FATAL("ctx_header is NULL");
 		assert(0);
 	} else if(ctx_header->type == KVS_CTX_SLAVE_OF_ME) {
 		// slave connection
-		//return _kvs_handler_init_slave_info(conn);
+		
+		kvs_master_slave_state_machine_tick(server->master, conn);
 	} else if(ctx_header->type == KVS_CTX_MASTER_OF_ME) {
 		// master connection
 		// do nothing, just set recv event
@@ -239,7 +234,7 @@ int kvs_handler_on_timer(void *global_ctx) {
 }
 
 
-int kvs_handler_process_raw_buffer(struct kvs_server_s* server, char* buf, int len, int *parsed_length) {
+kvs_status_t kvs_handler_process_raw_buffer(struct kvs_server_s* server, char* buf, int len, int *parsed_length) {
 	if(buf == NULL || len <=0 || parsed_length == NULL) {
 		return -1;
 	}

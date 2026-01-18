@@ -1,4 +1,5 @@
 #include "kvs_server.h"
+#include "kvs_types.h"
 #include "logger.h"
 #include "kvs_network.h"
 #include "kvs_event_loop.h"
@@ -13,7 +14,7 @@
 
 #include <sys/wait.h>
 
-void kvs_server_check_child_exit(struct kvs_server_s *server) {
+static void _kvs_server_check_child_exit(struct kvs_server_s *server) {
     int statloc;
     pid_t pid;
 
@@ -32,12 +33,13 @@ void kvs_server_check_child_exit(struct kvs_server_s *server) {
                 LOG_INFO("Background RDB saved successfully.");
                 
                 // 【核心】RDB 成功，触发广播逻辑
-                // 这里调用 Master 模块去通知所有等待的 Slave
-                kvs_master_on_rdb_save_finish(server->master, KVS_OK);
+                // 这里调用 server的propagate 去通知所有等待的 Slave 和client
+                kvs_server_on_rdb_save_finish(server, KVS_OK);
                 
             } else {
                 LOG_WARN("Background RDB failed.");
-                kvs_master_on_rdb_save_finish(server->master, KVS_ERR);
+                assert(0);
+                kvs_server_on_rdb_save_finish(server, KVS_ERR);
             }
         } else {
             LOG_WARN("Unknown child process %d exited.", pid);
@@ -66,7 +68,7 @@ void kvs_server_on_signal(void *ctx, int res, int flags) {
         case SIGCHLD:
             LOG_INFO("Received SIGCHLD, child process exited.");
             // 核心逻辑：去检查是不是 RDB 子进程挂了
-            kvs_server_check_child_exit(server); 
+            _kvs_server_check_child_exit(server); 
             break;
     }
 

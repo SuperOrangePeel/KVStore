@@ -14,40 +14,46 @@
 #include <stdio.h>
 #include <assert.h>
 
-static inline void _kvs_conn_init_buffer(struct kvs_conn_s *conn) {
+static inline void _kvs_net_create_buffer(struct kvs_network_s *network, struct kvs_conn_s *conn) {
     if(conn == NULL) return;
     if(conn->r_buffer != NULL || conn->w_buffer != NULL) {
-        conn->r_buf_sz = conn->_internal.net->read_buffer_size;
+        conn->r_buf_sz = network->read_buffer_size;
         conn->r_idx = 0;
-        conn->w_buf_sz = conn->_internal.net->write_buffer_size;
+        conn->w_buf_sz = network->write_buffer_size;
         conn->w_idx = 0;
         
         conn->raw_buf_sent_sz = 0;
         // already initialized
         return;
     }
-    conn->r_buffer = (char *)kvs_malloc(conn->_internal.net->read_buffer_size); // 4KB read buffer
-    conn->r_buf_sz = conn->_internal.net->read_buffer_size;
+    conn->r_buffer = (char *)kvs_malloc(network->read_buffer_size); // 4KB read buffer
+    conn->r_buf_sz = network->read_buffer_size;
     conn->r_idx = 0;
     
-    conn->w_buffer = (char *)kvs_malloc(conn->_internal.net->write_buffer_size); // 1MB write buffer
-    conn->w_buf_sz = conn->_internal.net->write_buffer_size;
+    conn->w_buffer = (char *)kvs_malloc(network->write_buffer_size); // 1MB write buffer
+    conn->w_buf_sz = network->write_buffer_size;
     conn->w_idx = 0;
     
     conn->raw_buf_sent_sz = 0;
 }
 
-static inline void _kvs_conn_close_conn(struct kvs_conn_s *conn) {
-    // if (conn->r_buffer) {
-    //     kvs_free(conn->r_buffer, conn->r_buf_sz);
-    //     conn->r_buffer = NULL;
-    // }
-    // if (conn->w_buffer) {
-    //     kvs_free(conn->w_buffer, conn->w_buf_sz);
-    //     conn->w_buffer = NULL;
-    // }
-    //memset(conn->r_buffer, 0, conn->r_buf_sz);
-    //memset(conn->w_buffer, 0, conn->w_buf_sz);
+static inline void _kvs_net_destroy_buffer(struct kvs_network_s *network, struct kvs_conn_s *conn) {
+    
+}
+
+
+
+static inline void _kvs_net_deinit_conn(struct kvs_network_s *net, struct kvs_conn_s *conn) {
+    // 不free buffer，留给下一次复用
+    if(conn == NULL) {
+        LOG_FATAL("_kvs_net_deinit_conn: conn is NULL");
+        assert(0);
+        return;
+    }
+
+    // 如果连接的fd是最大的，更新 conn_num
+    net->conn_num = conn->_internal.fd + 1 == net->conn_num ? net->conn_num - 1 : net->conn_num;
+
 
     // 不要设置为0，没有意义。。。还会导致不明事件。。
     //conn->r_buf_sz = 0;
@@ -56,10 +62,14 @@ static inline void _kvs_conn_close_conn(struct kvs_conn_s *conn) {
     conn->w_idx = 0;
     conn->raw_buf_sent_sz = 0;
     conn->_internal.fd = -1;
-    conn->_internal.net = NULL;
+    //conn->_internal.net = NULL;
     conn->_internal.is_reading = 0;
     conn->_internal.is_writing = 0;
     conn->_internal.is_closed = 1;
+
+
+
+    
     // kvs_loop_cancel_event(&conn->_internal.net->loop, &conn->_internal.read_ev);
     // kvs_loop_cancel_event(&conn->_internal.net->loop, &conn->_internal.write_ev);
 }
@@ -76,7 +86,7 @@ static void _net_on_write(void *ctx, int res, int flags) {
         conn->_internal.net->on_close(conn); // notify upper layer
         LOG_DEBUG("closing connection fd: %d", conn->_internal.fd);
         close(conn->_internal.fd);
-        _kvs_conn_close_conn(conn);
+        _kvs_net_deinit_conn(conn->_internal.net, conn);
         return;
     }
     // LOG_DEBUG("write completed, bytes sent: %d, msg left: [%.s]", res, conn->w_idx, conn);
@@ -85,7 +95,7 @@ static void _net_on_write(void *ctx, int res, int flags) {
     if (conn->w_idx > 0) {
         // 还有剩余数据未发送，继续发送
         memmove(conn->w_buffer, conn->w_buffer + res, conn->w_idx);
-        //kvs_loop_add_write_raw(&conn->_internal.net->loop, &conn->_internal.write_ev, conn->w_buffer, conn->w_idx);
+        //kvs_loop_add_send(&conn->_internal.net->loop, &conn->_internal.write_ev, conn->w_buffer, conn->w_idx);
         kvs_net_set_send_event_manual(conn);
     } else {
         // 全部发送完毕，调用业务层回调
@@ -119,7 +129,7 @@ static void _net_on_read(void *ctx, int res, int flags) {
         //LOG_DEBUG("read error ", conn->_internal.)
         //LOG_DEBUG("closing connection fd: %d, res: %d", conn->_internal.fd, res);
         close(conn->_internal.fd);
-        _kvs_conn_close_conn(conn);
+        _kvs_net_deinit_conn(conn->_internal.net, conn);
         return;
     }
     
@@ -156,6 +166,26 @@ static void _net_on_read(void *ctx, int res, int flags) {
     kvs_net_set_recv_event(conn);
 }
 
+static inline void _kvs_net_init_conn(struct kvs_network_s *net, struct kvs_conn_s *conn, int client_fd) {
+    if(conn == NULL || net == NULL) return;
+    conn->_internal.fd = client_fd;
+    conn->_internal.net = net;
+    conn->_internal.is_closed = 0;
+    conn->_internal.is_reading = 0;
+    conn->_internal.is_writing = 0;
+    _kvs_net_create_buffer(net, conn);
+
+    conn->bussiness_ctx = NULL; // 业务层可以自行设置
+    conn->server_ctx = net->server_ctx;
+
+    // 如果是最大的 fd，更新 conn_num
+    net->conn_num = client_fd + 1 > net->conn_num ? client_fd + 1 : net->conn_num;
+
+    // 注册事件回调
+    kvs_event_init(&conn->_internal.read_ev, client_fd, KVS_EV_READ, _net_on_read, conn);
+    kvs_event_init(&conn->_internal.write_ev, client_fd,  KVS_EV_WRITE, _net_on_write, conn);
+}
+
 // 内部回调：处理 Accept
 static void _net_on_accept(void *ctx, int res, int flags) {
     struct kvs_network_s  *net = ctx;
@@ -163,25 +193,20 @@ static void _net_on_accept(void *ctx, int res, int flags) {
     // 1. 从 Loop 拿到了新的 fd
     int client_fd = res;
     if (client_fd < 0) return; // Error handling
-
+    if(client_fd >= net->max_conns) {
+        LOG_ERROR("accepted fd %d exceeds max_conns %d", client_fd, net->max_conns);
+        close(client_fd);
+        // 重新提交 accept
+        kvs_loop_add_accept(&net->loop, &net->accept_ev, 
+            (struct sockaddr*)&net->client_addr, &net->client_addrlen);
+        return;
+    }
+    
     // 2. 从连接池拿一个空闲对象 (资源管理)
     struct kvs_conn_s *conn = &net->conns[client_fd]; // 简单映射，或者查空闲链表
-    conn->_internal.net = net;
-    conn->bussiness_ctx = NULL; // 业务层可以自行设置
-    conn->_internal.fd = client_fd;
-    conn->server_ctx = net->server_ctx;
-    conn->_internal.version ++; // 版本号加一，避免旧事件误操作
-    _kvs_conn_init_buffer(conn);
-
-    // 先初始化读写事件，注册fd，再调用业务层！！！
-    kvs_event_init(&conn->_internal.read_ev, client_fd, KVS_EV_READ, _net_on_read, conn);
-    kvs_event_init(&conn->_internal.write_ev, client_fd,  KVS_EV_WRITE, _net_on_write, conn);
+    _kvs_net_init_conn(net, conn, client_fd);
 
     net->on_accept(conn); 
-    conn->_internal.is_closed = 0;
-
-    // 3. 设置好读事件的回调，注册到 Loop (胶水代码)
-    // 注意：这里 conn->r_buffer 已经在 init 里准备好了
    
     // 4. 告诉 Loop：开始监听读
     kvs_net_set_recv_event(conn);
@@ -297,7 +322,7 @@ int kvs_net_set_send_event_raw_buffer(struct kvs_conn_s *conn, char *send_buf, i
     
     if(conn->_internal.is_writing == 0){
         // 注册写事件
-        kvs_loop_add_write_raw(&conn->_internal.net->loop, 
+        kvs_loop_add_send(&conn->_internal.net->loop, 
             &conn->_internal.write_ev, send_buf, send_buf_sz);
         conn->_internal.is_writing = 1;
     }
@@ -336,7 +361,7 @@ int kvs_net_set_send_event_manual(struct kvs_conn_s *conn) {
 
     if(conn->_internal.is_writing == 0){    
         // 注册写事件
-        kvs_loop_add_write_raw(&conn->_internal.net->loop, 
+        kvs_loop_add_send(&conn->_internal.net->loop, 
             &conn->_internal.write_ev, conn->w_buffer, conn->w_idx);
         conn->_internal.is_writing = 1;
     }
@@ -352,7 +377,7 @@ int kvs_net_set_recv_event(struct kvs_conn_s *conn) {
         return 0;
     }
     // 注册读事件
-    kvs_loop_add_read(&conn->_internal.net->loop, &conn->_internal.read_ev, conn->r_buffer + conn->r_idx, conn->r_buf_sz - conn->r_idx);
+    kvs_loop_add_recv(&conn->_internal.net->loop, &conn->_internal.read_ev, conn->r_buffer + conn->r_idx, conn->r_buf_sz - conn->r_idx);
     conn->_internal.is_reading = 1;
     return 0;
 }
@@ -366,7 +391,23 @@ int kvs_net_resigster_fd(struct kvs_network_s *net, int fd, struct kvs_conn_s **
     conn->bussiness_ctx = NULL; // 业务层可以自行设置
     conn->_internal.fd = fd;
     conn->server_ctx = net->server_ctx;
-    _kvs_conn_init_buffer(conn);
+    _kvs_net_init_conn(net, conn, fd);
     *out_conn = conn;
     return 0;
+}
+
+int kvs_net_online_conns_filter(struct kvs_network_s *net, kvs_conn_filter_cb filter_cb, void* arg) {
+    if( net == NULL || filter_cb == NULL) {
+        return -1;
+    }
+    int count = 0;
+    for(int i = 0; i < net->conn_num; i++) {
+        struct kvs_conn_s *conn = &net->conns[i];
+        if(conn->_internal.fd >=0 && !conn->_internal.is_closed) {
+            if(filter_cb(conn, arg) >=0) {
+                count++;
+            }
+        }
+    }
+    return count;
 }

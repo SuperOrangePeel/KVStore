@@ -49,6 +49,7 @@ struct kvs_network_s {
     
     // 2. 管理连接池 (资源)
     struct kvs_conn_s *conns;
+    int conn_num;
     int max_conns;
     int read_buffer_size;
     int write_buffer_size;
@@ -95,4 +96,8 @@ int kvs_net_set_recv_event(struct kvs_conn_s *conn);
 
 
 int kvs_net_resigster_fd(struct kvs_network_s *net, int fd, struct kvs_conn_s **out_conn);
+
+
+typedef int (*kvs_conn_filter_cb)(struct kvs_conn_s *conn, void* arg);
+int kvs_net_online_conns_filter(struct kvs_network_s *net, kvs_conn_filter_cb filter_cb, void* arg);
 #endif

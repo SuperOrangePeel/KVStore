@@ -8,7 +8,8 @@ typedef enum {
     KVS_ERR = -1,// 系统错误（内存、IO、严重逻辑错误）
     KVS_OK = 0,    // 正常执行
     KVS_AGAIN,     // 数据不全，需重试
-    KVS_QUIT       // 需关闭连接
+    KVS_QUIT,       // 需关闭连接
+	KVS_STATUS_CONTINUE // 状态机继续
 } kvs_status_t;
 
 /* ===========================PROACTOR CONTEXT=================================================== */
@@ -41,6 +42,7 @@ typedef enum {
 
 	// special control status
 	KVS_RES_SYNC_SLAVE,
+	KVS_RES_RDB_SKIP_RESPONSE
 	
 } kvs_result_t;
 

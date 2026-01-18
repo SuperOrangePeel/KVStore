@@ -1,5 +1,6 @@
 #include "kvs_persistence.h"
 #include "common.h"
+#include "logger.h"
 
 #include <bits/types/struct_iovec.h>
 #include <fcntl.h>
@@ -18,6 +19,7 @@ struct kvs_pers_context_s kvs_aof_ctx = {0}; // global context
 
 struct kvs_pers_context_s * kvs_persistence_create(struct kvs_pers_config_s *config) {
     if(config == NULL) {
+        assert(0);
         return NULL;
     }
     char* aof_filename = config->aof_filename ? config->aof_filename : "kvstore.aof";
@@ -28,6 +30,10 @@ struct kvs_pers_context_s * kvs_persistence_create(struct kvs_pers_config_s *con
 
     ctx->aof_filename = (char*)kvs_malloc(strlen(aof_filename) + 1);
     if(ctx->aof_filename == NULL) {
+        assert(0);
+        kvs_free(ctx, sizeof(struct kvs_pers_context_s));
+        LOG_FATAL("Failed to allocate memory for aof_filename");
+        assert(0); 
         return NULL;
     }
     strncpy(ctx->aof_filename, aof_filename, strlen(aof_filename) + 1);
@@ -37,17 +43,26 @@ struct kvs_pers_context_s * kvs_persistence_create(struct kvs_pers_config_s *con
     //     return -1;
     // }
     ctx->aof_fd = -1; // not opened yet
+    ctx->aof_fd = open(ctx->aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
     gettimeofday(&ctx->last_fsync_time, NULL);
     ctx->buffer_size = AOF_MAX_BUFFER_SIZE;
     ctx->write_offset = 0;
 
     ctx->rdb_filename = (char*)kvs_malloc(strlen(rdb_filename) + 1);
     if(ctx->rdb_filename == NULL) {
+        assert(0);
         kvs_free(ctx->aof_filename, strlen(ctx->aof_filename) + 1);
         ctx->aof_filename = NULL;
         return NULL;
     }
     strncpy(ctx->rdb_filename, rdb_filename, strlen(rdb_filename) + 1);
+    if(ctx->rdb_filename == NULL) {
+        assert(0);
+        kvs_free(ctx->aof_filename, strlen(ctx->aof_filename) + 1);
+        ctx->aof_filename = NULL;
+        kvs_free(ctx, sizeof(struct kvs_pers_context_s));
+        return NULL;
+    }
     //ctx->rdb_fp = NULL;
     ctx->rdb_size = 0;
 
@@ -115,6 +130,8 @@ int kvs_persistence_flush_aof(struct kvs_pers_context_s *ctx) {
         return -1;
     }
     if(ctx->aof_fd == -1) {
+        // not opened yet
+        // assert(0);
         return -1;
     }
     if(ctx->write_offset > 0) {

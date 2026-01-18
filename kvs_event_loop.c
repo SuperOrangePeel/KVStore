@@ -1,4 +1,5 @@
 #include "kvs_event_loop.h"
+#include <liburing.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -51,17 +52,10 @@ void kvs_loop_run(kvs_loop_t *loop) {
                 ev->handler(ev->ctx, cqe->res, cqe->flags);
             }
             
-            // 标记 CQE 已处理，暂不通知内核，等一圈处理完统一 advance
         }
         //printf("kvs_loop_run: processed %d completions\n", count);
-        // 告诉内核我们处理了一批 CQE
+        
         io_uring_cq_advance(&loop->ring, count);
-        //io_uring_cq_advance(&loop->ring, 0); 
-        // advance 0 是因为 liburing 的 for_each 宏配合 cq_advance 可能会有版本差异
-        // 标准做法是：io_uring_cqe_seen 内部已经调了 advance。
-        // 所以上面的 for_each 里应该用 io_uring_cqe_seen(&loop->ring, cqe);
-        // 为了性能优化，我们可以手动批量 advance，但 liburing 封装得很好，
-        // 建议直接在循环里用 io_uring_cqe_seen。
     }
 }
 
@@ -93,7 +87,7 @@ int kvs_loop_add_accept(kvs_loop_t *loop, kvs_event_t *ev, struct sockaddr *addr
     return 0;
 }
 
-int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len) {
+int kvs_loop_add_recv(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len) {
     struct io_uring_sqe *sqe = get_sqe_safe(loop);
     if (!sqe) return -1;
     
@@ -102,26 +96,26 @@ int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len) 
     return 0;
 }
 
-// int kvs_loop_add_read_buffer(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
-//     struct io_uring_sqe *sqe = get_sqe_safe(loop);
-//     if (!sqe) return -1;
+int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
+    struct io_uring_sqe *sqe = get_sqe_safe(loop);
+    if (!sqe) return -1;
 
-//     // 显式指定 buffer (用于 signalfd read)
-//     io_uring_prep_read(sqe, ev->fd, buf, len, 0);
-//     io_uring_sqe_set_data(sqe, ev);
-//     return 0;
-// }
+    // 显式指定 buffer (用于 signalfd read)
+    io_uring_prep_read(sqe, ev->fd, buf, len, 0);
+    io_uring_sqe_set_data(sqe, ev);
+    return 0;
+}
 
-// int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev) {
-//     struct io_uring_sqe *sqe = get_sqe_safe(loop);
-//     if (!sqe) return -1;
+int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
+    struct io_uring_sqe *sqe = get_sqe_safe(loop);
+    if (!sqe) return -1;
 
-//     io_uring_prep_send(sqe, ev->fd, ev->buf, ev->len, 0);
-//     io_uring_sqe_set_data(sqe, ev);
-//     return 0;
-// }
+    io_uring_prep_write(sqe, ev->fd, buf, len, 0);
+    io_uring_sqe_set_data(sqe, ev);
+    return 0;
+}
 
-int kvs_loop_add_write_raw(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
+int kvs_loop_add_send(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
     struct io_uring_sqe *sqe = get_sqe_safe(loop);
     if (!sqe) return -1;
 

@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
             .role = KVS_SERVER_ROLE_MASTER,
             .master_config.max_slave_count = KVS_SERVER_MAX_SLAVES_DEFAULT,
             .master_config.repl_backlog_size = 1024 * 1024, // 1MB
-            .pers_config.aof_enabled = 0,
+            .pers_config.aof_enabled = 1,
             .pers_config.aof_filename = "kvstore.aof",
             .pers_config.rdb_filename = "dump.rdb",
         };
@@ -65,6 +65,7 @@ int main(int argc, char *argv[]) {
         kvs_net_start(&global_server.network);
 
 	} else if(argc == 5 && strcmp(argv[2], "slave") == 0){
+        // ./kvstore 2001 slave 127.0.0.1 2000
         const char *master_ip = argv[3];
 		int master_port = atoi(argv[4]);
 
@@ -88,7 +89,10 @@ int main(int argc, char *argv[]) {
 		//printf("RDB sync from master completed.\n");
 			
 		kvs_net_start(&global_server.network);
-	}
+	} else {
+        printf("args error\n");
+        return -1;
+    }
     // #if (NETWORK_SELECT == NETWORK_REACTOR)
 	// 		reactor_start(port, kvs_handler_on_msg);  //
     // #elif (NETWORK_SELECT == NETWORK_NTYCO)
@@ -99,7 +103,7 @@ int main(int argc, char *argv[]) {
 
     
 
-	printf("args error\n");
+	
 	kvs_net_deinit(&global_server.network);
     kvs_server_deinit(&global_server);
 

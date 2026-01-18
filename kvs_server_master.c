@@ -9,14 +9,77 @@
 #include <assert.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define KVS_MAX_SLAVES_DEFAULT 128
+
+static inline kvs_status_t _kvs_master_slave_sync_begin(struct kvs_master_s *master, struct kvs_conn_s *slave_conn) {
+    if(master == NULL || slave_conn == NULL) {
+        assert(0);
+        return KVS_ERR;
+    }
+
+    // increase syncing slave count
+    master->syncing_slaves_count += 1;
+    if(master->syncing_slaves_count == 1) {
+        // first syncing slave, open rdb fd
+        if(master->rdb_fd > 0) {
+            close(master->rdb_fd);
+        }
+        master->rdb_fd = open(master->server->pers_ctx->rdb_filename, O_RDONLY);
+        if(master->rdb_fd < 0) {
+            LOG_FATAL("open rdb file %s failed: %s", master->server->pers_ctx->rdb_filename, strerror(errno));
+            assert(0);
+            return KVS_ERR;
+        }
+        master->is_repl_backlog = 1; // start writing to repl backlog
+        master->repl_backlog_idx = 0; // reset repl backlog index
+        master->repl_backlog_overflow = 0;
+
+        struct stat rdb_st;
+        fstat(master->rdb_fd, &rdb_st);
+        master->rdb_size = rdb_st.st_size;
+    }
+    
+
+    return KVS_OK;
+}
+
+static inline kvs_status_t _kvs_master_slave_sync_end(struct kvs_master_s *master, struct kvs_conn_s *slave_conn) {
+    if(master == NULL || slave_conn == NULL) {
+        assert(0);
+        return KVS_ERR;
+    }
+
+    
+    master->syncing_slaves_count -= 1;
+    if(master->syncing_slaves_count < 0) {
+        LOG_FATAL("syncing_slaves_count < 0");
+        assert(0);
+        return KVS_ERR;
+    } else if(master->syncing_slaves_count == 0) {
+        // all syncing slaves finished, close rdb fd
+        if(master->rdb_fd > 0) {
+            close(master->rdb_fd);
+        }
+        master->rdb_fd = -1; 
+        master->repl_backlog_idx = 0; // reset backlog
+        master->is_repl_backlog = 0; // stop writing to repl backlog
+        master->repl_backlog_overflow = 0;
+    }
+
+    return KVS_OK;
+}
+
+kvs_status_t kvs_master_add_slave(struct kvs_master_s *master, struct kvs_conn_s *conn);
+kvs_status_t _kvs_repl_slave_sending_rdb_handler(struct kvs_master_s *master, struct kvs_conn_s *conn);
 
 kvs_status_t kvs_master_init(struct kvs_master_s *master, struct kvs_server_s *server, struct kvs_master_config_s *config) {
     if(master == NULL || server == NULL || config == NULL) return KVS_ERR;
     master->server = server;
 
     master->slave_count = 0;
+    master->slave_count_online = 0;
 
     // init config
     master->max_slave_count = config-> max_slave_count <= 0 ? KVS_MAX_SLAVES_DEFAULT : config->max_slave_count;
@@ -62,228 +125,274 @@ kvs_status_t kvs_master_deinit(struct kvs_master_s *master) {
     return KVS_OK;
 }
 
-kvs_status_t kvs_master_slave_connection_init(struct kvs_master_s *master, struct kvs_conn_s *conn) {
-    if(master == NULL || conn == NULL) {
-        return KVS_ERR;
-    }
-    
-    LOG_DEBUG("%s:%d convert connection to slave, fd: %d\n", __FILE__, __LINE__, conn->_internal.fd);
-    struct kvs_ctx_header_s* ctx_header = (struct kvs_ctx_header_s*)conn->bussiness_ctx;
-    if(ctx_header == NULL) {
-        LOG_FATAL("%s:%d ctx_header is NULL\n", __FILE__, __LINE__);
-        assert(0);
-        return -1;
-    }
 
-    if(ctx_header->type == KVS_CTX_NORMAL_CLIENT) {
-        // normal client connection changed to slave connection
-        kvs_free(ctx_header, sizeof(struct kvs_ctx_header_s));
-        struct kvs_master_slave_context_s* slave_ctx = (struct kvs_master_slave_context_s*)kvs_malloc(sizeof(struct kvs_master_slave_context_s));
-        memset(slave_ctx, 0, sizeof(struct kvs_master_slave_context_s));
-        slave_ctx->header.type = KVS_CTX_SLAVE_OF_ME;
-        conn->bussiness_ctx = (void*)slave_ctx;
-        slave_ctx->slave_idx = -1; // will be assigned later
-    } else {
-        LOG_FATAL("%s:%d unknown ctx type: %d\n", __FILE__, __LINE__, ctx_header->type);
-        assert(0);
-        return -1;
-    }
 
-    return KVS_OK;
-}
-
-kvs_status_t kvs_master_slave_connection_deinit(struct kvs_master_s *master, struct kvs_conn_s *conn) {
-    if(master == NULL || conn == NULL) {
-        return KVS_ERR;
-    }
-    
-    
-    LOG_DEBUG("%s:%d slave connection closed, fd: %d\n", __FILE__, __LINE__, conn->_internal.fd);
-    struct kvs_ctx_header_s* ctx_header = (struct kvs_ctx_header_s*)conn->bussiness_ctx;
-    if(ctx_header == NULL) {
-        LOG_FATAL("ctx_header is NULL");
-        assert(0);
-        return KVS_ERR;
-    }
-    if(ctx_header->type == KVS_CTX_SLAVE_OF_ME) {
-        // slave connection closed
-        struct kvs_master_slave_context_s* slave_ctx = (struct kvs_master_slave_context_s*)conn->bussiness_ctx;
-
-        assert(slave_ctx != NULL);
-        assert(slave_ctx->slave_idx >= 0);
-
-        kvs_free(slave_ctx, sizeof(struct kvs_master_slave_context_s));
-    } else {
-        LOG_FATAL("%s:%d unknown ctx type: %d\n", __FILE__, __LINE__, ctx_header->type);
-        assert(0);
-        return KVS_ERR;
-    }
-
-    return KVS_OK;
-}
-
-kvs_status_t kvs_master_slave_sync_start(struct kvs_master_s *master, struct kvs_conn_s *conn) {
+kvs_status_t _kvs_repl_slave_none_handler(struct kvs_master_s *master, struct kvs_conn_s *slave_conn) {
     // 1. check if can accept new slave
-    if(master->slave_count + master->syncing_slaves_count >= master->max_slave_count) {
+    if(master->slave_count >= master->max_slave_count) {
         // slave limit reached
         LOG_WARN("slave limit reached");
         // todo : return more error info to slave
         return KVS_QUIT;
     }
+    master->slave_count ++;
 
-    if(conn->bussiness_ctx == NULL) assert(0);
-    struct kvs_master_slave_context_s* slave_ctx = (struct kvs_master_slave_context_s*)conn->bussiness_ctx;
+
+    if(slave_conn == NULL) assert(0);
+    if(slave_conn->bussiness_ctx == NULL) assert(0);
+    struct kvs_repl_slave_context_s* slave_ctx = (struct kvs_repl_slave_context_s*)slave_conn->bussiness_ctx;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME || slave_ctx->slave_idx != -1) {
-        printf("%s:%d invalid slave state: %d\n", __FILE__, __LINE__, slave_ctx->header.type);
+        LOG_FATAL("invalid slave state: %d", slave_ctx->header.type);
         assert(0);
         return KVS_ERR;
     }
-    
+
+    LOG_DEBUG("Adding new slave, current slave count: %d", master->slave_count);
     int ret = 0;
     // 2. start RDB save if not in progress
     if(master->server->rdb_child_pid <= 0) {
         // no RDB save in progress, start a new one
         ret = kvs_server_save_rdb_fork(master->server);
-        slave_ctx->state = CONN_STATE_SLAVE_WAIT_RDB;
         if(ret != KVS_OK) {
-            printf("%s:%d kvs_server_save_rdb_fork failed\n", __FILE__, __LINE__);
+            LOG_FATAL("kvs_server_save_rdb_fork failed");
             assert(0);
             return KVS_ERR;
         }
-        
     }
-    slave_ctx->state = CONN_STATE_SLAVE_WAIT_RDB;
-    if(master->rdb_fd > 0) {
-        close(master->rdb_fd);
-    }
-    master->rdb_fd = -1; // will be opened in sync tick
+    slave_ctx->state = KVS_REPL_SLAVE_WAIT_BGSAVE_END;
+    
 
     return KVS_OK;
 }
 
-kvs_status_t kvs_master_slave_sync_tick(struct kvs_master_s *master, struct kvs_conn_s *conn) {
-    if(master == NULL || conn == NULL) {
+
+kvs_status_t _kvs_repl_slave_wait_bgsave_end_handler(struct kvs_master_s *master, struct kvs_conn_s *conn) {
+    if(conn == NULL || conn->bussiness_ctx == NULL) {
+        assert(0);
         return KVS_ERR;
     }
-    if(conn->bussiness_ctx == NULL) assert(0);
-    struct kvs_master_slave_context_s* slave_ctx = (struct kvs_master_slave_context_s*)conn->bussiness_ctx;
+    struct kvs_repl_slave_context_s *slave_ctx = (struct kvs_repl_slave_context_s*)conn->bussiness_ctx;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
         LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
         assert(0);
         return KVS_ERR;
     }
-    if(slave_ctx->state != CONN_STATE_SLAVE_WAIT_RDB && 
-        slave_ctx->state != CONN_STATE_SLAVE_SEND_RDB &&
-        slave_ctx->state != CONN_STATE_SLAVE_SEND_REPL) {
-        printf("%s:%d invalid slave state: %d\n", __FILE__, __LINE__, slave_ctx->state);
+
+    if(master->server->rdb_child_pid > 0) {
+        assert(0);
+        return KVS_ERR; // still saving
+    }
+
+    // RDB save finished
+    
+    if(master->rdb_fd > 0 && master->syncing_slaves_count == 0) {
+        close(master->rdb_fd);
+    }
+
+
+    //LOG_INFO("RDB save finished, start sending RDB to slave fd %d", conn->_internal.fd);
+    // 动作：切换状态，开始发文件
+    slave_ctx->state = KVS_REPL_SLAVE_SENDING_RDB;
+    return KVS_STATUS_CONTINUE; // trigger sending immediately
+}
+
+
+kvs_status_t _kvs_repl_slave_sending_rdb_handler(struct kvs_master_s *master, struct kvs_conn_s *slave_conn) {
+    /************io uring发送 *******/
+    if(slave_conn == NULL || slave_conn->bussiness_ctx == NULL) {
+        assert(0);
+        return KVS_ERR;
+    }
+    struct kvs_repl_slave_context_s *slave_ctx = (struct kvs_repl_slave_context_s*)slave_conn->bussiness_ctx;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        assert(0);
+        return KVS_ERR;
+    }
+    size_t *rdb_offset = &slave_ctx->rdb_offset;
+    assert(slave_conn->w_idx == 0);
+
+    _kvs_master_slave_sync_begin(master, slave_conn);
+
+    if(*rdb_offset == 0) {
+        // first time sending, send rdb size first
+        int head_size = snprintf(slave_conn->w_buffer, slave_conn->w_buf_sz, "$%ld\r\n", master->rdb_size);
+        slave_conn->w_idx += head_size;
+    }
+
+
+    int pret = pread(master->rdb_fd, slave_conn->w_buffer + slave_conn->w_idx, slave_conn->w_buf_sz - slave_conn->w_idx, *rdb_offset);
+    if(pret < 0) {
+        printf("%s:%d pread rdb file failed: %s\n", __FILE__, __LINE__, strerror(errno));
+        assert(0);
+    } else if(pret == 0) {
+        // finish sending rdb file
+        LOG_DEBUG("finish sending rdb file to slave");
+        // rdb file descriptor will be closed when next rdb save
+        // close(conn->server->master.rdb_fd);
+        // conn->server->master.rdb_fd = -1;
+        slave_ctx->state = KVS_REPL_SLAVE_SENDING_BACKLOG;
+        *rdb_offset = 0;
+        assert(slave_conn->w_idx == 0);
+        return KVS_STATUS_CONTINUE; // continue to send backlog
+    } else {
+        *rdb_offset += pret;
+        LOG_DEBUG("rdb send size: %d", pret);
+        slave_conn->w_idx += pret;
+        kvs_net_set_send_event_manual(slave_conn);
+    }
+    /************** rdma发送 **************/
+    return KVS_OK;
+}
+
+kvs_status_t _kvs_repl_slave_sending_backlog_handler(struct kvs_master_s *master, struct kvs_conn_s *conn) {
+    if(conn == NULL || conn->bussiness_ctx == NULL) {
         assert(0);
         return KVS_ERR;
     }
     
-    kvs_master_slave_conn_state_t *slave_state = &slave_ctx->state;
-    int pret = 0;
-    size_t *rdb_offset = &slave_ctx->rdb_offset;
+    struct kvs_repl_slave_context_s *slave_ctx = (struct kvs_repl_slave_context_s*)conn->bussiness_ctx;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        assert(0);
+        return KVS_ERR;
+    }
     size_t *repl_backlog_offset = &slave_ctx->repl_backlog_offset;
-    switch(*slave_state){
-        case CONN_STATE_SLAVE_WAIT_RDB:
-            // check if RDB save is finished
-            if(master->server->rdb_child_pid > 0) {
-                // still saving RDB
-                kvs_net_set_recv_event(conn);
-                break;
-            } else {
-                // RDB save finished
-                LOG_DEBUG("RDB save finished, start sending RDB to slave");
-                master->syncing_slaves_count ++;
-                *slave_state = CONN_STATE_SLAVE_SEND_RDB;
-                *rdb_offset = 0;
-            }
-            // fall through
-            // no break here
-		case CONN_STATE_SLAVE_SEND_RDB:
-            if(master->rdb_fd <= 0) {
-                // the first slave to send RDB, open the rdb file
-                master->rdb_fd = open("dump.rdb", O_RDONLY);
-                if(master->rdb_fd < 0) {
-                    LOG_FATAL("master->rdb_fd open failed");
-                    assert(0);
-                }
-            }
+    assert(conn->w_idx == 0);
+    size_t to_send = master->repl_backlog_idx - *repl_backlog_offset;
 
-			pret = pread(master->rdb_fd, conn->w_buffer, conn->w_buf_sz, *rdb_offset);
-			if(pret < 0) {
-				printf("%s:%d pread rdb file failed: %s\n", __FILE__, __LINE__, strerror(errno));
-				assert(0);
-			} else if(pret == 0) {
-				// finish sending rdb file
-				LOG_DEBUG("finish sending rdb file to slave");
-				// rdb file descriptor will be closed when next rdb save
-				// close(conn->server->master.rdb_fd);
-				// conn->server->master.rdb_fd = -1;
-				*repl_backlog_offset = 0;
-				goto SLAVE_SEND_REPL_LABEL;
-			} else {
-				*rdb_offset += pret;
-				conn->w_idx = pret;
-				kvs_net_set_send_event_manual(conn);
-			}
-			break;
-		case CONN_STATE_SLAVE_SEND_REPL:
-		{
-SLAVE_SEND_REPL_LABEL:
-			if(master->slave_count < 0) {
-				LOG_FATAL("invalid master slave count: %d", master->slave_count);
-				assert(0);
-			}
-			if(master->repl_backlog != NULL && master->repl_backlog_idx > 0) {
-                int bytes_sent = conn->raw_buf_sent_sz;
-				if(bytes_sent > 0 && slave_ctx->state == CONN_STATE_SLAVE_SEND_REPL) {
-					*repl_backlog_offset += bytes_sent;
-				}
-				slave_ctx->state = CONN_STATE_SLAVE_SEND_REPL;
-                LOG_DEBUG("[slave state SEND REPL] slave fd: %d, repl_backlog_offset: %zu\n", conn->_internal.fd, *repl_backlog_offset);
-				if(*repl_backlog_offset < master->repl_backlog_idx) {
-					size_t remaining = master->repl_backlog_idx - *repl_backlog_offset;
-					kvs_net_set_send_event_raw_buffer(conn, master->repl_backlog + *repl_backlog_offset, remaining);
-					break;
-				} else {
-					// finish sending replication backlog
-					LOG_DEBUG("finish sending replication backlog to slave");
-				}
-			} else {
-				// no replication backlog data
-				LOG_DEBUG("no replication backlog data to send to slave\n");
-			}
+    if(to_send > conn->w_buf_sz) {
+        to_send = conn->w_buf_sz;
+    }
+    if(to_send == 0) {
+        // finish sending backlog
+        LOG_DEBUG("finish sending backlog to slave");
+        slave_ctx->state = KVS_REPL_SLAVE_ONLINE;
+        _kvs_master_slave_sync_end(master, conn);
+        kvs_master_add_slave(master, conn);
+        *repl_backlog_offset = 0;
+        assert(conn->w_idx == 0);
+        return KVS_STATUS_CONTINUE; // done
+    } else {
+        memcpy(conn->w_buffer, master->repl_backlog + *repl_backlog_offset, to_send);
+        *repl_backlog_offset += to_send;
+        conn->w_idx = to_send;
+        kvs_net_set_send_event_manual(conn);
+    }
+    return KVS_OK;
+}
 
-			slave_ctx->state = CONN_STATE_SLAVE_ONLINE;
-            LOG_DEBUG("[slave state ONLINE] slave fd: %d\n", conn->_internal.fd);
-			master->syncing_slaves_count --;
-			assert(master->syncing_slaves_count >= 0);
-			if(master->syncing_slaves_count == 0) {
-				close(master->rdb_fd);
-				master->rdb_fd = -1;
-				master->repl_backlog_idx = 0;
-			}
+kvs_status_t kvs_repl_slave_online_handler(struct kvs_master_s *master, struct kvs_conn_s *conn) {
+    if(conn == NULL || conn->bussiness_ctx == NULL) {
+        assert(0);
+        return KVS_ERR;
+    }
+    struct kvs_repl_slave_context_s *slave_ctx = (struct kvs_repl_slave_context_s*)conn->bussiness_ctx;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        assert(0);
+        return KVS_ERR;
+    }
+    
+    assert(conn->w_idx == 0);
 
-			assert(master->slave_count < master->max_slave_count);
-            master->slave_conns[master->slave_count] = conn;
-            slave_ctx->slave_idx = master->slave_count;
-			master->slave_count ++ ;
-			LOG_DEBUG("new slave [fd:%d] connected, total slave count: %d\n", conn->_internal.fd, master->slave_count);
-			kvs_net_set_recv_event(conn);
-		}
-			break;
-		case CONN_STATE_SLAVE_ONLINE:
-            // normal online state
-			kvs_net_set_recv_event(conn);
-			break;
-		default:
-			LOG_FATAL("invalid connection state: %d\n", *slave_state);
-			assert(0);
+
+    assert(slave_ctx->slave_idx != -1);
+    
+    // now in online state, do nothing
+    return KVS_OK;
+}
+
+typedef kvs_status_t (*slave_state_handler_t)(struct kvs_master_s *master, struct kvs_conn_s *slave_conn);
+
+slave_state_handler_t slave_state_handlers[] = {
+    [KVS_REPL_SLAVE_NONE] = _kvs_repl_slave_none_handler,
+    [KVS_REPL_SLAVE_WAIT_BGSAVE_END] = _kvs_repl_slave_wait_bgsave_end_handler,
+    [KVS_REPL_SLAVE_SENDING_RDB] = _kvs_repl_slave_sending_rdb_handler,
+    [KVS_REPL_SLAVE_SENDING_BACKLOG] = _kvs_repl_slave_sending_backlog_handler,
+    [KVS_REPL_SLAVE_ONLINE] = kvs_repl_slave_online_handler,
+    [KVS_REPL_SLAVE_OFFLINE] = NULL
+};
+
+kvs_status_t kvs_master_slave_state_machine_tick(struct kvs_master_s *master, struct kvs_conn_s *slave_conn) {
+    if(master == NULL || slave_conn == NULL) return KVS_ERR;
+    struct kvs_repl_slave_context_s* slave_ctx = (struct kvs_repl_slave_context_s*)slave_conn->bussiness_ctx;
+    if(slave_ctx == NULL) {
+        LOG_FATAL("slave_ctx is NULL");
+        assert(0);
+        return KVS_ERR;
+    }
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        assert(0);
+        return KVS_ERR;
     }
 
-    return KVS_OK;
+    kvs_status_t ret;
 
+    do {
+
+        kvs_repl_slave_state_t state = slave_ctx->state;
+        if(state < KVS_REPL_SLAVE_NONE || state >= KVS_REPL_SLAVE_STATE_NUM) {
+            LOG_FATAL("invalid slave state: %d", state);
+            assert(0);
+            return KVS_ERR;
+        }
+
+        slave_state_handler_t handler = slave_state_handlers[state];
+        if(handler == NULL) {
+            LOG_FATAL("handler for state %d is NULL", state);
+            assert(0);
+            return KVS_ERR;
+        }
+        
+    
+        ret = handler(master, slave_conn); // ignore return value for now
+        if(ret == KVS_ERR) {
+            // 状态回退
+            LOG_FATAL("slave state handler for state %d failed", state);
+            assert(0);
+            return KVS_ERR;
+        } else if(ret == KVS_QUIT) {
+            // 断开连接
+            LOG_INFO("slave state handler for state %d requested to quit", state);
+            assert(0);
+            return KVS_QUIT;
+        }
+    } while (ret == KVS_STATUS_CONTINUE);
+   
+
+    return KVS_OK;
+}
+
+
+
+kvs_status_t kvs_master_add_slave(struct kvs_master_s *master, struct kvs_conn_s *conn) {
+    if(master == NULL || conn == NULL) {
+        return KVS_ERR;
+    }
+    if(conn->bussiness_ctx == NULL) {
+        LOG_FATAL("conn bussiness_ctx is NULL");
+        assert(0);
+        return KVS_ERR;
+    }
+    struct kvs_repl_slave_context_s* slave_ctx = (struct kvs_repl_slave_context_s*)conn->bussiness_ctx;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        assert(0);
+        return KVS_ERR;
+    }
+    if(master->slave_count_online >= master->max_slave_count) {
+        LOG_FATAL("slave count exceed max_slave_count: %d", master->max_slave_count);
+        assert(0);
+        return KVS_ERR;
+    }
+
+    slave_ctx->slave_idx = master->slave_count_online;
+    master->slave_conns[master->slave_count_online] = conn;
+    master->slave_count_online ++;
+    LOG_DEBUG("add new slave idx: %d, fd: %d\n", slave_ctx->slave_idx, conn->_internal.fd);
+    return KVS_OK;
 }
 
 /**
@@ -293,40 +402,73 @@ kvs_status_t kvs_master_remove_slave(struct kvs_master_s *master, struct kvs_con
     if(master == NULL || conn == NULL) {
         return KVS_ERR;
     }
-    if(conn->bussiness_ctx == NULL) assert(0);
-    struct kvs_master_slave_context_s* slave_ctx = (struct kvs_master_slave_context_s*)conn->bussiness_ctx;
+    if(conn->bussiness_ctx == NULL) {
+        LOG_FATAL("conn bussiness_ctx is NULL");
+        assert(0);
+        return KVS_ERR;
+    }
+    struct kvs_repl_slave_context_s* slave_ctx = (struct kvs_repl_slave_context_s*)conn->bussiness_ctx;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
         LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
         assert(0);
         return KVS_ERR;
     }
     int slave_idx = slave_ctx->slave_idx;
-    if(slave_idx < 0 || slave_idx >= master->slave_count) {
-        LOG_FATAL("invalid slave idx: %d, slave_count: %d", slave_idx, master->slave_count);
+    if(slave_idx < 0 || slave_idx >= master->slave_count_online) {
+        LOG_FATAL("invalid slave idx: %d, slave_count: %d", slave_idx, master->slave_count_online);
         assert(0);
         return KVS_ERR;
     }
 
     LOG_DEBUG("remove slave idx: %d, fd: %d\n", slave_idx, master->slave_conns[slave_idx]->_internal.fd);
     // remove the slave connection from the array
-    if(slave_idx < master->slave_count -1 ) {
-        struct kvs_conn_s *last_slave_conn = master->slave_conns[master->slave_count - 1];
-        master->slave_conns[master->slave_count - 1] = NULL;
+    if(slave_idx < master->slave_count_online -1 ) {
+        struct kvs_conn_s *last_slave_conn = master->slave_conns[master->slave_count_online - 1];
+        master->slave_conns[master->slave_count_online - 1] = NULL;
         master->slave_conns[slave_idx] = last_slave_conn;
-        struct kvs_master_slave_context_s* last_slave_ctx = (struct kvs_master_slave_context_s*)last_slave_conn->bussiness_ctx;
+        struct kvs_repl_slave_context_s* last_slave_ctx = (struct kvs_repl_slave_context_s*)last_slave_conn->bussiness_ctx;
         if(last_slave_ctx == NULL || last_slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
             LOG_FATAL("invalid last slave ctx");
             assert(0);
             return KVS_ERR;
         }
         last_slave_ctx->slave_idx = slave_idx;
-    } else if(slave_idx == master->slave_count -1 ) {
+    } else if(slave_idx == master->slave_count_online -1 ) {
         master->slave_conns[slave_idx] = NULL;
     } else {
-        LOG_FATAL("invalid slave idx: %d, slave_count: %d", slave_idx, master->slave_count);
+        LOG_FATAL("invalid slave idx: %d, slave_count: %d", slave_idx, master->slave_count_online);
         assert(0);
         return KVS_ERR;
     }
+    master->slave_count_online --;
     master->slave_count --;
+    return KVS_OK;
+}
+
+
+kvs_status_t kvs_master_propagate_command_to_slaves(struct kvs_master_s *master, struct kvs_handler_cmd_s *cmd) {
+    if(master == NULL || cmd == NULL) {
+        return KVS_ERR;
+    }
+    if(cmd->cmd_type & KVS_CMD_WRITE) {
+        // propagate to slaves
+        //LOG_DEBUG("propagate command to %d slaves", master->slave_count_online);
+        for(int i = 0; i < master->slave_count_online; i++) {
+            struct kvs_conn_s *slave_conn = master->slave_conns[i];
+            if(slave_conn == NULL) {
+                LOG_FATAL("slave_conn is NULL at idx: %d", i);
+                assert(0);
+                return KVS_ERR;
+            }
+            // append to slave's send buffer
+            if(slave_conn->w_idx + cmd->raw_len > slave_conn->w_buf_sz) {
+                LOG_WARN("slave conn fd %d send buffer full, drop command", slave_conn->_internal.fd);
+                continue;
+            }
+            memcpy(slave_conn->w_buffer + slave_conn->w_idx, cmd->raw_ptr, cmd->raw_len);
+            slave_conn->w_idx += cmd->raw_len;
+            kvs_net_set_send_event_manual(slave_conn);
+        }
+    }
     return KVS_OK;
 }

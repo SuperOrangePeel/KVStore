@@ -31,7 +31,7 @@ typedef struct kvs_event_s {
     kvs_event_type_t type;  // 事件类型
     kvs_event_cb handler;   // 回调函数
     void *ctx;              // 用户上下文
-    int version;          // 版本号，防止过期事件处理
+    //int version;          // 版本号，防止过期事件处理
     
     // 预留给 uring 的参数，避免 malloc
     // void *buf;
@@ -53,12 +53,14 @@ void kvs_loop_stop(kvs_loop_t *loop);
 
 // --- 提交接口 (只 Prep，不 Submit) ---
 int kvs_loop_add_accept(kvs_loop_t *loop, kvs_event_t *ev, struct sockaddr *addr, socklen_t *addrlen);
-int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len);
-//int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev);
-int kvs_loop_add_write_raw(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len); // 写指定 buffer
+int kvs_loop_add_send(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len); 
+int kvs_loop_add_recv(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len);
+
+int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
+int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
+
 int kvs_loop_add_timeout(kvs_loop_t *loop, kvs_event_t *ev, struct __kernel_timespec *ts);
-// 这里的 buffer 是给 read 用的 (signalfd 读取 info)
-//int kvs_loop_add_read_buffer(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
+
 
 void kvs_loop_cancel_event(kvs_loop_t *loop, kvs_event_t *ev);
 

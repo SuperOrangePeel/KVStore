@@ -2,6 +2,7 @@
 
 #include "kvs_persistence.h"
 #include "common.h"
+#include "logger.h"
 
 #include <sys/socket.h>
 #include <stdio.h>
@@ -9,6 +10,8 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+
+#include <assert.h>
 
 
 static int _init_connection(struct kvs_slave_s *slave) {
@@ -85,6 +88,7 @@ int _kvs_slave_sync_rdb(struct kvs_slave_s *slave) {
     idx += 2;
     fwrite(header_buf + idx, 1, received - idx, tmp_rdb_fp);
     int f_received = received - idx;
+    printf("RDB size to receive: %d, already received: %d\n", rdb_size, f_received);
     while(f_received < rdb_size) {
         char data_buf[8192];
         ssize_t chunk = recv(slave->master_fd, data_buf, sizeof(data_buf), 0);
@@ -102,7 +106,11 @@ int _kvs_slave_sync_rdb(struct kvs_slave_s *slave) {
     }
 
     fclose(tmp_rdb_fp);
-
+    if(slave->server->pers_ctx == NULL) {
+        printf("slave server pers_ctx is NULL\n");
+        assert(0);
+        return -1;
+    }
     if(rename(tmp_filename, slave->server->pers_ctx->rdb_filename) != 0) {
         perror("rename RDB file");
         return -1;
@@ -129,7 +137,6 @@ kvs_status_t kvs_slave_connect_master(struct kvs_slave_s *slave) {
     }
 }
 
-
 kvs_status_t kvs_slave_init(struct kvs_slave_s *slave, struct kvs_server_s *server , struct kvs_slave_config_s *config) {
     if(slave == NULL || config == NULL) return KVS_ERR;
 
@@ -137,7 +144,8 @@ kvs_status_t kvs_slave_init(struct kvs_slave_s *slave, struct kvs_server_s *serv
     slave->master_fd = -1;
     strncpy(slave->master_ip, config->master_ip, strlen(config->master_ip));
     slave->master_port = config->master_port;
-    slave->state = SYNC_HANDSHAKE;
+    slave->state = KVS_REPL_MASTER_NONE;
+    slave->server = server;
 
     return KVS_OK;
 }
