@@ -62,7 +62,7 @@ void kvs_server_on_signal(void *ctx, int res, int flags) {
         case SIGINT:
         case SIGTERM:
             LOG_INFO("Received SHUTDOWN signal, exiting...");
-            server->network.loop.stop = 1; // 让主循环退出
+            server->loop.stop = 1; // 让主循环退出
             break;
 
         case SIGCHLD:
@@ -74,7 +74,7 @@ void kvs_server_on_signal(void *ctx, int res, int flags) {
 
     // 【重要】io_uring 的读是一次性的，必须重新提交！
     // 就像 listen fd 每次 accept 完要重新 add_accept 一样
-    kvs_loop_add_read(&server->network.loop, 
+    kvs_loop_add_read(&server->loop, 
                              &server->signal_ev, 
                              &server->signal_info, 
                              sizeof(struct signalfd_siginfo));
@@ -112,7 +112,7 @@ int kvs_server_init_signals(struct kvs_server_s *server) {
     
     // 提交第一个读请求
     // 我们需要读 sizeof(struct signalfd_siginfo) 这么多字节
-    return kvs_loop_add_read(&server->network.loop, 
+    return kvs_loop_add_read(&server->loop, 
                                     &server->signal_ev, 
                                     &server->signal_info, // 这是一个预分配的 struct signalfd_siginfo
                                     sizeof(struct signalfd_siginfo));

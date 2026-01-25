@@ -35,12 +35,14 @@ int kvs_request(struct conn *c) {
 
 	int length_processed = kvs_handler(c->rbuffer, c->rlength, c->wbuffer, &c->wlength);
 
-}
+	return 0;
+}	
+
 
 int kvs_response(struct conn *c) {
 
 	
-
+	return 0;
 }
 
 
@@ -81,7 +83,7 @@ int set_event(int fd, int event, int flag) {
 		
 	}
 	
-
+	return 0;
 }
 
 
@@ -100,6 +102,8 @@ int event_register(int fd, int event) {
 	conn_list[fd].wlength = 0;
 
 	set_event(fd, event, 1);
+
+	return 0;
 }
 
 

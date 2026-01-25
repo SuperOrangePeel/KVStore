@@ -137,9 +137,9 @@ int _kvs_proactor_add_conn(struct kvs_proactor_s *proactor, int fd) {
 	conn->r_buf_sz = proactor->read_buffer_size;
 	conn->r_buffer = (char *)malloc(conn->r_buf_sz);
 	conn->r_idx = 0;
-	conn->w_buf_sz = proactor->write_buffer_size;
-	conn->w_buffer = (char *)malloc(conn->w_buf_sz);
-	conn->w_idx = 0;
+	conn->s_buf_sz = proactor->write_buffer_size;
+	conn->s_buffer = (char *)malloc(conn->s_buf_sz);
+	conn->s_idx = 0;
 	conn->global_ctx = proactor->global_ctx;
 
 	proactor->conn_num = fd > proactor->conn_num ? fd + 1 : proactor->conn_num;
@@ -157,9 +157,9 @@ int _kvs_proactor_remove_conn(struct kvs_proactor_s *proactor, int fd) {
 		free(conn->r_buffer);
 		conn->r_buffer = NULL;
 	}
-	if(conn->w_buffer) {
-		free(conn->w_buffer);
-		conn->w_buffer = NULL;
+	if(conn->s_buffer) {
+		free(conn->s_buffer);
+		conn->s_buffer = NULL;
 	}
 	memset(conn, 0, sizeof(struct kvs_conn_s));
 
@@ -301,7 +301,7 @@ int _kvs_proactor_event_write(struct kvs_proactor_s *proactor, struct io_uring_c
 	memcpy(&result, &entry_u->user_data, sizeof(struct conn_info));
 	int ret = entry_u->res;
 	cur_conn->_internal.is_writing = 0;
-	assert(cur_conn->w_idx >= 0);
+	assert(cur_conn->s_idx >= 0);
 	if(ret < 0) {
 		// todo:error handling
 		
@@ -310,35 +310,35 @@ int _kvs_proactor_event_write(struct kvs_proactor_s *proactor, struct io_uring_c
 		// assert(0);
 		return -1;
 	} 
-	if(ret > cur_conn->w_idx) {
+	if(ret > cur_conn->s_idx) {
 		// error
-		printf("%s:%d send more than w_idx, ret: %d, w_idx: %d\n", __FILE__, __LINE__, ret, cur_conn->w_idx);
-		printf("buffer[%.*s]\n", cur_conn->w_idx, cur_conn->w_buffer);
+		printf("%s:%d send more than s_idx, ret: %d, s_idx: %d\n", __FILE__, __LINE__, ret, cur_conn->s_idx);
+		printf("buffer[%.*s]\n", cur_conn->s_idx, cur_conn->s_buffer);
 		assert(0);
 	}
 
 	
-	if(ret < cur_conn->w_idx) {
+	if(ret < cur_conn->s_idx) {
 		if(ret > 0) {
 
 			// not send all data
-			memmove(cur_conn->w_buffer, cur_conn->w_buffer + ret, cur_conn->w_idx - ret);
-			cur_conn->w_idx -= ret;
+			memmove(cur_conn->s_buffer, cur_conn->s_buffer + ret, cur_conn->s_idx - ret);
+			cur_conn->s_idx -= ret;
 			
 		}
 		// ret == 0, need to resend all data
-		_set_event_send(ring, result.fd, cur_conn->w_buffer, cur_conn->w_idx, 0);
+		_set_event_send(ring, result.fd, cur_conn->s_buffer, cur_conn->s_idx, 0);
 		cur_conn->_internal.is_writing = 1;
 
 		
 		return 0;
-	} else if (ret == cur_conn->w_idx) {
+	} else if (ret == cur_conn->s_idx) {
 		// sent all data
-		cur_conn->w_idx -= ret;
-		assert(cur_conn->w_idx == 0);
+		cur_conn->s_idx -= ret;
+		assert(cur_conn->s_idx == 0);
 	}
 	
-	assert(cur_conn->w_idx == 0);
+	assert(cur_conn->s_idx == 0);
 
 	//printf("_set_event_send ret: %d, %s\n", ret, buffer);
 	// char* r_buffer = cur_conn->r_buffer;
@@ -469,19 +469,19 @@ int kvs_proactor_set_send_event(struct kvs_conn_s *conn, char *msg, int msg_sz) 
 	if(conn == NULL || msg == NULL || msg_sz <=0) {
 		return -1;
 	}
-	if(msg_sz + conn->w_idx > conn->w_buf_sz) {
+	if(msg_sz + conn->s_idx > conn->s_buf_sz) {
 		// overflow
 		LOG_WARN("connection write buffer overflowed");
-		LOG_DEBUG("msg_sz: %d, conn->w_idx:%d, conn->w_buf_sz:%d", msg_sz, conn->w_idx, conn->w_buf_sz);
+		LOG_DEBUG("msg_sz: %d, conn->s_idx:%d, conn->s_buf_sz:%d", msg_sz, conn->s_idx, conn->s_buf_sz);
 		return -2;
 	}
-	memcpy(conn->w_buffer + conn->w_idx, msg, msg_sz);
+	memcpy(conn->s_buffer + conn->s_idx, msg, msg_sz);
 	
-	conn->w_idx += msg_sz;
+	conn->s_idx += msg_sz;
 	
 
 	if(conn->_internal.is_writing == 0){	
-		_set_event_send(conn->_internal.proactor->uring, conn->_internal.fd, conn->w_buffer, conn->w_idx, 0);
+		_set_event_send(conn->_internal.proactor->uring, conn->_internal.fd, conn->s_buffer, conn->s_idx, 0);
 		conn->_internal.is_writing = 1;
 	}
 	return 0;
@@ -491,13 +491,13 @@ int kvs_proactor_set_send_event_manual(struct kvs_conn_s *conn) {
 	if(conn == NULL) {
 		return -1;
 	}
-	if(conn->w_idx <=0) {
+	if(conn->s_idx <=0) {
 		// nothing to send
 		return 0;
 	}
 
 	if(conn->_internal.is_writing == 0){	
-		_set_event_send(conn->_internal.proactor->uring, conn->_internal.fd, conn->w_buffer, conn->w_idx, 0);
+		_set_event_send(conn->_internal.proactor->uring, conn->_internal.fd, conn->s_buffer, conn->s_idx, 0);
 		conn->_internal.is_writing = 1;
 	}
 	return 0;

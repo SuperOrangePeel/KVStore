@@ -7,6 +7,7 @@
 typedef enum {
     KVS_ERR = -1,// 系统错误（内存、IO、严重逻辑错误）
     KVS_OK = 0,    // 正常执行
+	KVS_BREAK,    // 中断当前循环
     KVS_AGAIN,     // 数据不全，需重试
     KVS_QUIT,       // 需关闭连接
 	KVS_STATUS_CONTINUE // 状态机继续
@@ -14,16 +15,24 @@ typedef enum {
 
 /* ===========================PROACTOR CONTEXT=================================================== */
 
-typedef enum {
-    KVS_CTX_IDLE = 0,
-    KVS_CTX_NORMAL_CLIENT,  // 普通客户端
-    KVS_CTX_SLAVE_OF_ME,    // 我是 Master，这个连接是我的 Slave
-    KVS_CTX_MASTER_OF_ME    // 我是 Slave，这个连接是我的 Master
-} kvs_ctx_type_t;
 
-struct kvs_ctx_header_s{
-    kvs_ctx_type_t type;
-};
+
+//struct kvs_conn_s; 
+
+// // (V-Table)
+// struct kvs_ops_s {
+//     kvs_status_t (*on_recv)(struct kvs_conn_s *conn, int *read_size);
+//     kvs_status_t (*on_send)(struct kvs_conn_s *conn, int bytes_sent);
+//     void (*on_close)(struct kvs_conn_s *conn);
+//     void (*on_extra_event)(struct kvs_conn_s *conn, int event_type, void *data);
+//     const char *name; 
+// };
+
+// struct kvs_ctx_header_s{
+//     kvs_ctx_type_t type;
+// 	void* next_handler;
+// 	struct kvs_ops_s ops;
+// };
 
 /* ============================RESULT CODES=================================================== */
 
@@ -72,8 +81,8 @@ typedef enum {
 	//save
 	KVS_CMD_SAVE,
 	//slave sync
-	KVS_SLAVE_SYNC,
-	
+	KVS_CMD_SLAVE_SYNC,
+	KVS_CMD_SLAVE_SYNC_RDMA,
 	KVS_CMD_COUNT,
 	
 } kvs_command_t;
@@ -98,7 +107,14 @@ struct kvs_handler_cmd_s {
 	int len_val;
 };
 
-/* ============================================================================== */
-
+/* ===========================STATE MACHINE EVENT TRIGGERS=================================================== */
+typedef enum {
+	KVS_EVENT_COMMAND_RECEIVED = 0, // 收到完整命令
+    KVS_EVENT_READ_READY,   // 收到数据了
+    KVS_EVENT_WRITE_DONE,   // 数据发完了
+	KVS_EVENT_RDMA_ESTABLISHED, // 连接建立完成
+	KVS_EVENT_BGSAVE_END, // 后台 RDB 保存完成
+    KVS_EVENT_ERROR         // 出错了
+} kvs_event_trigger_t;
 
 #endif

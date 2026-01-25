@@ -3,6 +3,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdint.h>
 
 
 
@@ -97,6 +98,51 @@ static inline int _kvs_mp_get_slot_index(size_t size) {
 
 // static int eight_bytes_num = 0;
 // static int thirtytwo_bytes_num = 0;
+
+void* kvs_mempool_aligned_alloc(kvs_mp_pool_t *pool, size_t size, size_t alignment) {
+    if(size > KVS_MP_MAX_ALLOC_FROM_POOL) {
+        void* p = NULL;
+        int ret = posix_memalign(&p, alignment, size);
+        if(ret != 0 || p == NULL) {
+            return NULL;
+        }
+        return p;
+    }
+    int cls_idx = _kvs_mp_get_slot_index(size);
+
+    void* head = pool->heads[cls_idx];
+    if(head) {
+        uintptr_t addr = (uintptr_t)head;
+        uintptr_t aligned_addr = (addr + alignment - 1) & ~(alignment - 1);
+        pool->heads[cls_idx] = *((void**)head); // next pointer is stored in the first sizeof(void*) bytes
+        return (void*)aligned_addr;
+    } else {
+        void* p = NULL;
+        int ret = posix_memalign(&p, KVS_MP_PAGE_SIZE, KVS_MP_PAGE_SIZE);
+        if(ret != 0 || p == NULL) {
+            return NULL;
+        }
+        //memset(p, 0, KVS_MP_PAGE_SIZE);
+        if(cls_idx == KVS_MP_CLASS_COUNT - 1) return p;
+        size_t block_size = 1 << (cls_idx + KVS_MP_MIN_SHIFT);
+        size_t n_blocks = KVS_MP_PAGE_SIZE / block_size;
+        if(n_blocks < 2) {
+            return p;
+        }
+        size_t i = 1;
+        void* free_mem = (void*)((char*)p + block_size);
+        void* curr = free_mem;
+        for(i = 1; i < n_blocks; i ++ ) {
+            void* next = (i == n_blocks - 1) ? NULL : (void*)((char*)curr + block_size);
+            *((void**)curr) = next; // store next pointer
+            curr = next;
+        }
+        pool->heads[cls_idx] = free_mem;
+        uintptr_t addr = (uintptr_t)p;
+        uintptr_t aligned_addr = (addr + alignment - 1) & ~(alignment - 1);
+        return (void*)aligned_addr;
+    }
+}
 
 void* kvs_mempool_alloc(kvs_mp_pool_t *pool, size_t size) {
     if(size > KVS_MP_MAX_ALLOC_FROM_POOL) {

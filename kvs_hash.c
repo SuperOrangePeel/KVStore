@@ -169,6 +169,7 @@ kvs_hash_t *kvs_hash_create(int size) {
 	kvs_hash_t *hash = (kvs_hash_t *)kvs_malloc(sizeof(kvs_hash_t));
 
 	hash->nodes = (hashnode_t**)kvs_malloc(sizeof(hashnode_t*) * size);
+	memset(hash->nodes, 0, sizeof(hashnode_t*) * size);
 	if (!hash->nodes) return NULL;
 
 	hash->max_slots = size;
@@ -191,9 +192,7 @@ void kvs_hash_destroy(kvs_hash_t *hash) {
 			hashnode_t *tmp = node;
 			node = node->next;
 			hash->nodes[i] = node;
-			
 			kvs_free(tmp, sizeof(hashnode_t));
-			
 		}
 	}
 

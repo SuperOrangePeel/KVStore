@@ -100,6 +100,13 @@ int kvs_server_load_rdb(struct kvs_server_s *server) {
 	if(server == NULL || server->pers_ctx == NULL) {
 		return -1;
 	}
+    struct stat file_stat;
+	if(stat(server->pers_ctx->rdb_filename, &file_stat) != 0){
+		// rdb file not exist, skip
+		printf("RDB file not exist, skip RDB recovery.\n");
+		return KVS_ERR;
+	}
+
 	kvs_persistence_load_rdb(server->pers_ctx, _kvs_server_rdb_item_loader, server);
 	return 0;
 }
@@ -341,30 +348,30 @@ int _kvs_server_rdb_conn_cb(struct kvs_conn_s *conn, void* arg) {
         assert(0);
         return 0; // continue
     }
-    if(conn->bussiness_ctx == NULL) {
+    if(conn->header.user_data == NULL) {
         // server_fd business_ctx is NULL  
         return 0; // continue
     }
     struct kvs_server_s *server = (struct kvs_server_s *)arg;
-    struct kvs_ctx_header_s *ctx_header = (struct kvs_ctx_header_s*)conn->bussiness_ctx;
+    struct kvs_ctx_header_s *ctx_header = (struct kvs_ctx_header_s*)conn->header.user_data;
     
 
     switch(ctx_header->type) {
         case KVS_CTX_SLAVE_OF_ME:
         {
-            struct kvs_repl_slave_context_s *slave_ctx = (struct kvs_repl_slave_context_s*)conn->bussiness_ctx;
-            if(slave_ctx->state == KVS_REPL_SLAVE_WAIT_BGSAVE_END) {
+            struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
+            if(slave_ctx->state == KVS_MY_SLAVE_WAIT_BGSAVE_END) {
                 LOG_INFO("Notifying slave fd %d to start RDB transfer", conn->_internal.fd);
-                kvs_master_slave_state_machine_tick(server->master, conn);
+                kvs_master_slave_state_machine_tick(server->master, conn, KVS_EVENT_BGSAVE_END);
             }
             break;
         }
         case KVS_CTX_NORMAL_CLIENT:
         {
-            struct kvs_client_context_s *cli_ctx = (struct kvs_client_context_s*)conn->bussiness_ctx;
+            struct kvs_client_context_s *cli_ctx = (struct kvs_client_context_s*)conn->header.user_data;
             if(cli_ctx->state == KVS_CLIENT_STATE_WAIT_BGSAVE) {
                 //调用状态机
-                kvs_server_client_state_machine_tick(server, conn);
+                kvs_client_state_machine_tick(server, conn);
             }
             // normal client, skip
             break;

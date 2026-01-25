@@ -139,3 +139,30 @@ void kvs_loop_cancel_event(kvs_loop_t *loop, kvs_event_t *ev) {
     io_uring_prep_cancel(sqe, ev, 0); 
     io_uring_submit(&loop->ring);
 }
+
+int kvs_loop_add_poll_in(kvs_loop_t *loop, kvs_event_t *ev) {
+    struct io_uring_sqe *sqe = get_sqe_safe(loop);
+    if (!sqe) return -1;
+
+    io_uring_prep_poll_add(sqe, ev->fd, POLL_IN);
+    io_uring_sqe_set_data(sqe, ev);
+    return 0;
+}
+
+int kvs_loop_add_poll_out(kvs_loop_t *loop, kvs_event_t *ev) {
+    struct io_uring_sqe *sqe = get_sqe_safe(loop);
+    if (!sqe) return -1;
+
+    io_uring_prep_poll_add(sqe, ev->fd, POLL_OUT);
+    io_uring_sqe_set_data(sqe, ev);
+    return 0;
+}
+
+int kvs_loop_add_fsync(kvs_loop_t *loop, kvs_event_t *ev, int fd) {
+    struct io_uring_sqe *sqe = get_sqe_safe(loop);
+    if (!sqe) return -1;
+
+    io_uring_prep_fsync(sqe, fd, 0);
+    io_uring_sqe_set_data(sqe, ev);
+    return 0;
+}

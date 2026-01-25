@@ -1,9 +1,9 @@
 
 CC = gcc
-FLAGS = -I ./NtyCo/core/ -L ./NtyCo/ -lntyco -lpthread -luring -ldl -g -O3  -I deps/tomlc99# -ljemalloc
+FLAGS = -I ./deps/NtyCo/core/ -L ./deps/NtyCo/ -lntyco -lpthread -luring -ldl -g -O0  -I deps/tomlc99 -lrdmacm -libverbs -Wall -Wextra # -fsanitize=address# -ljemalloc
 SRCS = $(wildcard *.c) deps/tomlc99/toml.c
 TARGET = kvstore
-SUBDIRS = ./NtyCo/ ./test
+SUBDIRS = ./deps/NtyCo/ ./test ./deps/tomlc99
 OBJS = $(SRCS:.c=.o)
 
 

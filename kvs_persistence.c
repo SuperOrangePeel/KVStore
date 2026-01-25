@@ -43,7 +43,7 @@ struct kvs_pers_context_s * kvs_persistence_create(struct kvs_pers_config_s *con
     //     return -1;
     // }
     ctx->aof_fd = -1; // not opened yet
-    ctx->aof_fd = open(ctx->aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    //ctx->aof_fd = open(ctx->aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
     gettimeofday(&ctx->last_fsync_time, NULL);
     ctx->buffer_size = AOF_MAX_BUFFER_SIZE;
     ctx->write_offset = 0;

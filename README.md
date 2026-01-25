@@ -50,8 +50,8 @@ struct kvs_conn_s {
 	int r_buf_sz;
     int r_idx;
 	char* response;
-	int w_buf_sz;
-    int w_idx;
+	int s_buf_sz;
+    int s_idx;
 
     // 用户自定义参数..
 };

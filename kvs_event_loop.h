@@ -13,6 +13,8 @@ typedef enum {
     KVS_EV_NONE = 0,
     KVS_EV_READ,        // Socket 读 / File 读
     KVS_EV_WRITE,       // Socket 写 / File 写
+    KVS_EV_POLL_IN,     // 可读事件 (poll)
+    KVS_EV_POLL_OUT,    // 可写事件 (poll)
     KVS_EV_ACCEPT,      // 监听
     KVS_EV_CONNECT,     // 主动连接
     KVS_EV_SIGNAL,      // 信号
@@ -57,12 +59,17 @@ int kvs_loop_add_send(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
 int kvs_loop_add_recv(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len);
 
 int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
+int kvs_loop_add_fsync(kvs_loop_t *loop, kvs_event_t *ev, int fd);
 int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
 
 int kvs_loop_add_timeout(kvs_loop_t *loop, kvs_event_t *ev, struct __kernel_timespec *ts);
 
 
 void kvs_loop_cancel_event(kvs_loop_t *loop, kvs_event_t *ev);
+
+
+int kvs_loop_add_poll_in(kvs_loop_t *loop, kvs_event_t *ev);
+int kvs_loop_add_poll_out(kvs_loop_t *loop, kvs_event_t *ev);
 
 // 辅助：初始化事件对象
 static inline void kvs_event_init(kvs_event_t *ev, int fd, /*int version, */kvs_event_type_t type, kvs_event_cb cb, void *ctx) {

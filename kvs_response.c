@@ -9,22 +9,22 @@
 #include <stdlib.h>
 
 
-kvs_status_t kvs_format_response(int result, char *value, int len_val, struct kvs_conn_s *conn) {
+kvs_status_t kvs_format_response(kvs_result_t result, char *value, int len_val, struct kvs_conn_s *conn) {
 	if(conn == NULL) return KVS_ERR;
 	switch(result) {
 		case KVS_RES_OK:
 			//kvs_proactor_set_send_event(conn, "+OK\r\n", 5);
-			kvs_net_copy_msg_to_send_buf(conn, "+OK\r\n", 5);
+			kvs_net_copy_msg_to_send_buf(conn, "+OK\r\n", sizeof("+OK\r\n") - 1); 
 			break;
 		case KVS_RES_EXIST:
-			kvs_net_copy_msg_to_send_buf(conn, "-EXIST\r\n", 9);
+			kvs_net_copy_msg_to_send_buf(conn, "-EXIST\r\n", sizeof("-EXIST\r\n") - 1);
 			break;
 		case KVS_RES_NOT_FOUND:
-			kvs_net_copy_msg_to_send_buf(conn, "-NOT FOUND\r\n", 13);
+			kvs_net_copy_msg_to_send_buf(conn, "-NOT FOUND\r\n", sizeof("-NOT FOUND\r\n") - 1); 
 			break;
 		case KVS_RES_VAL: {
 			if(value == NULL || len_val <= 0) {
-				kvs_net_copy_msg_to_send_buf(conn, "-ERROR\r\n", 8);
+				kvs_net_copy_msg_to_send_buf(conn, "-ERROR\r\n", sizeof("-ERROR\r\n") - 1);
 				break;
 			}
 			char header[64];
@@ -35,7 +35,7 @@ kvs_status_t kvs_format_response(int result, char *value, int len_val, struct kv
 			break;
 		}
 		case KVS_RES_UNKNOWN_CMD:
-			kvs_net_copy_msg_to_send_buf(conn, "-ERR unknown command\r\n", 22);
+			kvs_net_copy_msg_to_send_buf(conn, "-ERR unknown command\r\n", sizeof("-ERR unknown command\r\n") - 1);
 			break;
 		default:
 			LOG_FATAL("unknown result code: %d", result);

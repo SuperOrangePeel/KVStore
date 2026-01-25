@@ -2,6 +2,7 @@
 #define __COMMON_H__
 
 #include <stdlib.h>
+#include <stdint.h>
 
 #define KVS_MEM_POOL 1
 
@@ -16,4 +17,22 @@ void kvs_free(void *ptr, size_t size);
 
 
 int kvs_parse_int(char* s, int length, int* offset);
+uint64_t kvs_parse_uint64(char* s, int length, int* offset);
+
+uint64_t kvs_generate_token();
+
+struct kvs_session_entry_s {
+    uint64_t token;
+    void *session_ctx; // 指向具体的会话上下文
+    struct kvs_session_entry_s *next; // 链表
+};
+
+
+struct kvs_session_table_s {
+    struct kvs_session_entry_s *head;
+};
+
+uint64_t kvs_session_register(struct kvs_session_table_s *table, void *session_ctx);
+void *kvs_session_match(struct kvs_session_table_s *table, uint64_t token);
+
 #endif

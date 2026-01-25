@@ -1,11 +1,14 @@
 #include "kvs_server.h"
 //#include "kvs_proactor.h"
-#include "kvs_handler.h"
 #include "kvs_config.h"
 #include "logger.h"
 #include "kvs_network.h"
+#include "kvs_resp_protocol.h"
+#include "kvs_executor.h"
+#include "kvs_response.h"
 
 
+#include <linux/mount.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -31,11 +34,37 @@ int main(int argc, char *argv[]) {
 
     int port = atoi(argv[1]);
 
+    const char * server_ip = "172.16.135.130";
+
+    int io_uring_entries = 1024;
+    kvs_loop_init(&global_server.loop, io_uring_entries);
+
+    struct kvs_rdma_config_s rdma_conf = {
+        .server_ip = server_ip,
+        .server_port = 2001,
+        .cq_size = 256,
+        .max_recv_wr = 128,
+        .max_send_wr = 128,
+        .max_sge = 1,
+        .global_ctx = (void*)&global_server,
+        //.callbacks.on_connect_before = kvs_handler_on_rdma_connect_before,
+        .callbacks.on_connect_request = kvs_handler_on_rdma_connect_request,
+        .callbacks.on_established = kvs_handler_on_rdma_established,
+        .callbacks.on_disconnected = kvs_handler_on_rdma_disconnected,
+        .callbacks.on_error =  kvs_handler_on_rdma_error, // kvs_handler_on_rdma_error,
+
+        .callbacks.on_comp_recv = kvs_handler_on_rdma_cq_recv,
+        .callbacks.on_comp_send = kvs_handler_on_rdma_cq_send,
+    };
+
+    
     
     struct kvs_network_config_s net_conf = {
+        .loop = &global_server.loop,
+        .server_ip = server_ip,
         .port_listen = port,
         .max_conns = KVS_MAX_CONNECTS,
-        .io_uring_entries = 1024,
+        //.io_uring_entries = 1024,
         .read_buffer_size = 1048576,
         .write_buffer_size = 1048576, // 1MB
         .on_accept = kvs_handler_on_accept,
@@ -43,41 +72,71 @@ int main(int argc, char *argv[]) {
         .on_send = kvs_handler_on_send,
         .on_close = kvs_handler_on_close,
         .server_ctx = (void*)&global_server,
+
+        // //.rdma_ip = "192.168.31.16",
+        // .rdma_port = 2001,
+        // .cq_size = 256,
+        // .max_recv_wr = 128,
+        // .max_send_wr = 128,
+        // .max_sge = 1,
+        // .use_rdma = 1,
     };
 
     kvs_net_init(&global_server.network, &net_conf);
     //kvs_proactor_init(&proactor, &proactor_options);
+    size_t rdma_max_chunk_size = 1024; // 1kb
 
 	if(argc == 2) {
+        rdma_conf.server_port = 2001;
+        kvs_rdma_init_engine(&global_server.rdma_engine, &global_server.loop, &rdma_conf);
+
 		struct kvs_server_config_s server_config = {
             .role = KVS_SERVER_ROLE_MASTER,
+            //.io_uring_entries = 1024,
+
             .master_config.max_slave_count = KVS_SERVER_MAX_SLAVES_DEFAULT,
             .master_config.repl_backlog_size = 1024 * 1024, // 1MB
             .pers_config.aof_enabled = 1,
             .pers_config.aof_filename = "kvstore.aof",
             .pers_config.rdb_filename = "dump.rdb",
+            .protocol.protocol_parser = kvs_resp_parser,
+            .protocol.execute_command = kvs_executor_cmd,
+            .protocol.format_response = kvs_format_response,
+            .use_rdma = 1,
+            .rdma_max_chunk_size = rdma_max_chunk_size, 
         };
 
         kvs_server_init(&global_server, &server_config);
         LOG_DEBUG("kvs_server create");
-        kvs_server_storage_recovery(&global_server, kvs_handler_process_raw_buffer); // recovery from AOF/RDB
+        kvs_server_storage_recovery(&global_server); // recovery from AOF/RDB
 
-        kvs_net_start(&global_server.network);
-
+        //kvs_net_start(&global_server.network);
+        LOG_DEBUG("Start as master ip:port %s:%d\n", server_ip, port);
 	} else if(argc == 5 && strcmp(argv[2], "slave") == 0){
+        rdma_conf.server_port = 2002;
+        kvs_rdma_init_engine(&global_server.rdma_engine, &global_server.loop, &rdma_conf);
+
+
         // ./kvstore 2001 slave 127.0.0.1 2000
         const char *master_ip = argv[3];
 		int master_port = atoi(argv[4]);
 
         struct kvs_server_config_s server_config = {
             .role = KVS_SERVER_ROLE_SLAVE,
+            //.io_uring_entries = 1024,
+            .slave_config.master_ip = master_ip,
             .slave_config.master_port = master_port,
+            .slave_config.rdb_recv_buffer_count = 4,
             .pers_config.aof_enabled = 0,
             .pers_config.rdb_filename = "dump.rdb",
+            .protocol.protocol_parser = kvs_resp_parser,
+            .protocol.execute_command = kvs_executor_cmd,
+            .use_rdma = 1,
+            .rdma_max_chunk_size = rdma_max_chunk_size, 
         };
-        strcpy(server_config.slave_config.master_ip, master_ip);
+        //strcpy(server_config.slave_config.master_ip, master_ip);
 
-        printf("Start as slave, master %s:%d\n", master_ip, master_port);
+        
 
 	    kvs_server_init(&global_server, &server_config);
         // slave no need to recovery from AOF/RDB
@@ -88,11 +147,14 @@ int main(int argc, char *argv[]) {
 		// slave then will recv the replication commands from master
 		//printf("RDB sync from master completed.\n");
 			
-		kvs_net_start(&global_server.network);
+		//kvs_net_start(&global_server.network);
+        LOG_DEBUG("Start as slave, master %s:%d\n", master_ip, master_port);
 	} else {
-        printf("args error\n");
+        LOG_ERROR("args error\n");
         return -1;
     }
+
+    kvs_loop_run(&global_server.loop);
     // #if (NETWORK_SELECT == NETWORK_REACTOR)
 	// 		reactor_start(port, kvs_handler_on_msg);  //
     // #elif (NETWORK_SELECT == NETWORK_NTYCO)

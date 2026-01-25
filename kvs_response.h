@@ -5,6 +5,6 @@
 
 struct kvs_conn_s;
 
-kvs_status_t kvs_format_response(int result, char *value, int len_val, struct kvs_conn_s *conn);
+kvs_status_t kvs_format_response(kvs_result_t result, char *value, int len_val, struct kvs_conn_s *conn);
 
 #endif 

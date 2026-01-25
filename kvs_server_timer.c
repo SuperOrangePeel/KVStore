@@ -32,7 +32,7 @@ void _kvs_server_aof_timer_cb(void *ctx, int res, int flags) {
         return;
     }
     kvs_persistence_flush_aof(server->pers_ctx);
-    kvs_loop_add_timeout(&server->network.loop, &server->aof_timer_ev, &server->aof_ts);
+    kvs_loop_add_timeout(&server->loop, &server->aof_timer_ev, &server->aof_ts);
 }
 
 
@@ -48,6 +48,6 @@ kvs_status_t kvs_server_init_aof_timer(struct kvs_server_s *server) {
     server->aof_ts.tv_nsec = 0;
     
 
-    kvs_loop_add_timeout(&server->network.loop, &server->aof_timer_ev, &server->aof_ts);
+    kvs_loop_add_timeout(&server->loop, &server->aof_timer_ev, &server->aof_ts);
     return KVS_OK;
 }

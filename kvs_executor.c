@@ -10,6 +10,9 @@
 #include <string.h>
 #include <stdio.h>
 
+
+
+
 typedef kvs_result_t (*cmd_proc_t)(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn);
 
 kvs_result_t _kvs_exec_set(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
@@ -123,7 +126,7 @@ kvs_result_t _kvs_exec_save(struct kvs_server_s *server, struct kvs_handler_cmd_
         return KVS_RES_ERR;
     }
     if(KVS_OK == kvs_server_save_rdb_fork(server)) {
-        struct kvs_client_context_s* cli_ctx = (struct kvs_client_context_s*)conn->bussiness_ctx;
+        struct kvs_client_context_s* cli_ctx = (struct kvs_client_context_s*)conn->header.user_data;
         if(cli_ctx->header.type != KVS_CTX_NORMAL_CLIENT) {
             LOG_FATAL("invalid ctx type: %d", cli_ctx->header.type);
             assert(0);
@@ -143,12 +146,25 @@ kvs_result_t _kvs_exec_slave_sync(struct kvs_server_s *server, struct kvs_handle
         return KVS_RES_ERR;
     }
     kvs_server_convert_conn_type(server, conn, KVS_CTX_SLAVE_OF_ME);
-    struct kvs_repl_slave_context_s* slave_ctx = (struct kvs_repl_slave_context_s*)conn->bussiness_ctx;
-    slave_ctx->state = KVS_REPL_SLAVE_NONE;
-    kvs_master_slave_state_machine_tick(server->master, conn);
+    struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
+    slave_ctx->state = KVS_MY_SLAVE_NONE;
+    kvs_master_slave_state_machine_tick(server->master, conn, KVS_EVENT_COMMAND_RECEIVED);
 
-    return KVS_RES_RDB_SKIP_RESPONSE;
+    return KVS_RES_SYNC_SLAVE;
     
+}
+
+kvs_result_t _kvs_exec_slave_sync_rdma(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
+    if(server->master->slave_count + server->master->syncing_slaves_count >= server->master->max_slave_count) {
+        // todo : return more error info to slave 
+        return KVS_RES_ERR;
+    }
+    kvs_server_convert_conn_type(server, conn, KVS_CTX_SLAVE_OF_ME);
+    struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
+    slave_ctx->state = KVS_MY_SLAVE_NONE;
+    kvs_master_slave_state_machine_tick(server->master, conn, KVS_EVENT_COMMAND_RECEIVED);
+
+    return KVS_RES_SYNC_SLAVE;
 }
 
 static cmd_proc_t command_table[] = {
@@ -172,7 +188,8 @@ static cmd_proc_t command_table[] = {
     //save
     [KVS_CMD_SAVE] = _kvs_exec_save,
     //slave sync
-    [KVS_SLAVE_SYNC] = _kvs_exec_slave_sync
+    [KVS_CMD_SLAVE_SYNC] = _kvs_exec_slave_sync,
+    [KVS_CMD_SLAVE_SYNC_RDMA] = _kvs_exec_slave_sync_rdma,
 };
 
 kvs_result_t kvs_executor_cmd(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {

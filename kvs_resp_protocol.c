@@ -12,7 +12,7 @@ const char *command[] = {
 	"SET", "GET", "DEL", "MOD", "EXIST",
 	"RSET", "RGET", "RDEL", "RMOD", "REXIST",
 	"HSET", "HGET", "HDEL", "HMOD", "HEXIST",
-	"SAVE", "SYNC"
+	"SAVE", "SYNC", "SYNC_RDMA"
 };
 
 const int command_type[] = {
@@ -36,7 +36,8 @@ const int command_type[] = {
 	//save
 	[KVS_CMD_SAVE] = KVS_CMD_OTHER,
 	//slave sync
-	[KVS_SLAVE_SYNC] = KVS_CMD_OTHER,
+	[KVS_CMD_SLAVE_SYNC] = KVS_CMD_OTHER,
+	[KVS_CMD_SLAVE_SYNC_RDMA] = KVS_CMD_OTHER,
 };
 
 const int command_length[] = {
@@ -48,7 +49,7 @@ const int command_length[] = {
 
 
 
-kvs_status_t kvs_protocol(char* msg, int length, struct kvs_handler_cmd_s *cmd_pt, int *parsed_length) {
+kvs_status_t kvs_resp_parser(char* msg, int length, struct kvs_handler_cmd_s *cmd_pt, int *parsed_length) {
     if(cmd_pt == NULL || msg == NULL || length <= 0 || parsed_length == NULL /*|| idx < 0*/)  {
 		LOG_DEBUG("invalid argument");
 		return KVS_ERR;

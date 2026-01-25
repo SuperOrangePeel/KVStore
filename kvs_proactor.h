@@ -63,9 +63,9 @@ struct kvs_conn_s {
 	char* r_buffer;
 	int r_buf_sz;
     int r_idx;
-	char* w_buffer;
-	int w_buf_sz;
-    int w_idx;
+	char* s_buffer;
+	int s_buf_sz;
+    int s_idx;
     
     int raw_buf_sent_sz; // for raw buffer send tracking
 
@@ -74,7 +74,7 @@ struct kvs_conn_s {
 
     // user data pointers
     void *global_ctx;
-    void *bussiness_ctx;
+    void *user_data;
 	
     struct{
         int fd;
