@@ -109,11 +109,13 @@ struct kvs_handler_cmd_s {
 
 /* ===========================STATE MACHINE EVENT TRIGGERS=================================================== */
 typedef enum {
-	KVS_EVENT_COMMAND_RECEIVED = 0, // 收到完整命令
+	KVS_EVENT_TRIGGER_MANUAL = 0, // manual trigger 非io事件触发, 如sync命令触发，需要优化
+	KVS_EVENT_CONNECTED,    // 连接建立完成
     KVS_EVENT_READ_READY,   // 收到数据了
     KVS_EVENT_WRITE_DONE,   // 数据发完了
-	KVS_EVENT_RDMA_ESTABLISHED, // 连接建立完成
-	KVS_EVENT_BGSAVE_END, // 后台 RDB 保存完成
+	KVS_EVENT_CONTINUE,      // 状态机继续运行
+	//KVS_EVENT_RDMA_ESTABLISHED, // 连接建立完成
+	KVS_EVENT_BGSAVE_DONE, // 后台 RDB 保存完成
     KVS_EVENT_ERROR         // 出错了
 } kvs_event_trigger_t;
 

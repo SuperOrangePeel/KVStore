@@ -131,6 +131,7 @@ int main(int argc, char *argv[]) {
             .pers_config.rdb_filename = "dump.rdb",
             .protocol.protocol_parser = kvs_resp_parser,
             .protocol.execute_command = kvs_executor_cmd,
+            .protocol.format_response = kvs_format_response,
             .use_rdma = 1,
             .rdma_max_chunk_size = rdma_max_chunk_size, 
         };

@@ -37,6 +37,9 @@ kvs_status_t kvs_format_response(kvs_result_t result, char *value, int len_val, 
 		case KVS_RES_UNKNOWN_CMD:
 			kvs_net_copy_msg_to_send_buf(conn, "-ERR unknown command\r\n", sizeof("-ERR unknown command\r\n") - 1);
 			break;
+		case KVS_RES_ERR:
+			kvs_net_copy_msg_to_send_buf(conn, "-ERR\r\n", sizeof("-ERR\r\n") - 1);
+			break;
 		default:
 			LOG_FATAL("unknown result code: %d", result);
 			assert(0);

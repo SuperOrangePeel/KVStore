@@ -122,3 +122,65 @@ void *kvs_session_match(struct kvs_session_table_s *table, uint64_t token) {
     }
     return NULL; // 没找到
 }
+
+
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+#include <ctype.h>
+
+/**
+ * @brief 把指定内存区域dump为16进制格式（类似hexdump）
+ * @param addr 内存起始地址（任意类型指针）
+ * @param len  要dump的内存长度（字节数）
+ * @param title 可选标题（打印在dump结果开头，便于区分）
+ * @note 格式说明：
+ *       0x00000000: 00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff  | .................
+ */
+void mem_hexdump(const void *addr, size_t len, const char *title) {
+    // 异常处理：空指针或长度为0
+    if (addr == NULL || len == 0) {
+        printf("mem_hexdump: invalid input (addr=%p, len=%zu)\n", addr, len);
+        return;
+    }
+
+    // 打印标题（可选）
+    if (title != NULL && strlen(title) > 0) {
+        printf("===== %s (addr=%p, len=%zu) =====\n", title, addr, len);
+    }
+
+    // 转为uint8_t指针，避免类型问题
+    const uint8_t *buf = (const uint8_t *)addr;
+    // 每行打印16字节，循环处理
+    for (size_t offset = 0; offset < len; offset += 16) {
+        // 1. 打印当前行的内存地址（偏移）
+        printf("0x%08zx: ", offset);
+
+        // 2. 打印16进制部分（最多16字节）
+        for (size_t i = 0; i < 16; i++) {
+            if (offset + i < len) {
+                printf("%02x ", buf[offset + i]);
+            } else {
+                printf("   "); // 不足16字节时补空格
+            }
+        }
+
+        // 3. 分隔符
+        printf("| ");
+
+        // 4. 打印ASCII部分（可打印字符显示，不可打印显示'.'）
+        for (size_t i = 0; i < 16; i++) {
+            if (offset + i < len) {
+                uint8_t c = buf[offset + i];
+                printf("%c", isprint(c) ? c : '.');
+            } else {
+                printf(" "); // 不足16字节时补空格
+            }
+        }
+
+        // 换行
+        printf("\n");
+    }
+
+    printf("===== mem_hexdump end =====\n");
+}

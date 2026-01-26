@@ -107,6 +107,8 @@ typedef int (*kvs_on_accept_cb)(struct kvs_conn_s *conn);
 typedef int (*kvs_on_msg_cb)(struct kvs_conn_s *conn, int *read_size);
 typedef int (*kvs_on_send_cb)(struct kvs_conn_s *conn, int bytes_sent);
 typedef int (*kvs_on_close_cb)(struct kvs_conn_s *conn);
+typedef int  (*kvs_on_recv_cb)(void *ctx, int res);
+//typedef int (*kvs_on_send_cb)(void *ctx, int res);
 
 
 

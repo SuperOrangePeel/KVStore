@@ -115,6 +115,14 @@ kvs_mempool | 2060713.57 qps | 316M VIRT | 241M RES
 jemalloc    | 2151554.65 qps | 335M VIRT | 246M RES
 ```
 
+### rdma
+```
+$ sudo ufw disable
+$ sudo modprobe siw
+$ sudo rdma link add siw0 type siw netdev <网卡名>
+$ ibv_devices
+```
+
 ### iouring异步
 
 1. iouring在内核中是并行执行的

@@ -145,10 +145,10 @@ kvs_result_t _kvs_exec_slave_sync(struct kvs_server_s *server, struct kvs_handle
         // todo : return more error info to slave 
         return KVS_RES_ERR;
     }
-    kvs_server_convert_conn_type(server, conn, KVS_CTX_SLAVE_OF_ME);
+    kvs_server_convert_conn_ctx(server, conn, KVS_CTX_SLAVE_OF_ME);
     struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
     slave_ctx->state = KVS_MY_SLAVE_NONE;
-    kvs_master_slave_state_machine_tick(server->master, conn, KVS_EVENT_COMMAND_RECEIVED);
+    kvs_master_slave_state_machine_tick(server->master, conn, KVS_EVENT_TRIGGER_MANUAL);
 
     return KVS_RES_SYNC_SLAVE;
     
@@ -159,10 +159,10 @@ kvs_result_t _kvs_exec_slave_sync_rdma(struct kvs_server_s *server, struct kvs_h
         // todo : return more error info to slave 
         return KVS_RES_ERR;
     }
-    kvs_server_convert_conn_type(server, conn, KVS_CTX_SLAVE_OF_ME);
+    kvs_server_convert_conn_ctx(server, conn, KVS_CTX_SLAVE_OF_ME);
     struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
     slave_ctx->state = KVS_MY_SLAVE_NONE;
-    kvs_master_slave_state_machine_tick(server->master, conn, KVS_EVENT_COMMAND_RECEIVED);
+    kvs_master_slave_state_machine_tick(server->master, conn, KVS_EVENT_TRIGGER_MANUAL);
 
     return KVS_RES_SYNC_SLAVE;
 }

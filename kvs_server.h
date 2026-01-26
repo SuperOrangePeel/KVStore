@@ -72,32 +72,61 @@ struct kvs_server_config_s {
 };
 
 
+/*
+ * KVS_MY_MATSTER_WAIT_CONNECTED -> on_connected
+ * KVS_MY_MATSTER_WAIT_SYNC_RESPONSE -> on_sync_response
+ * KVS_MY_MATSTER_WAIT_RDMA_ESTABLISHED -> on_rdma_established
+ * KVS_MY_MATSTER_WAIT_SENT_READY -> on_sent_ready
+ * KVS_MY_MATSTER_WAIT_RECV_RDB -> on_recv_rdb
+ * KVS_MY_MATSTER_WAIT_SENT_ACK -> on_sent_ack
+ * KVS_MY_MASTER_WAIT_RECV_REPL -> on_recv_repl
+ * KVS_MY_MASTER_ONLINE -> online
+ */
+
 typedef enum {
     KVS_MY_MASTER_NONE = 0,
 
-    // tcp
-    KVS_MY_MASTER_CONNECTING,     // 正在 TCP 连接
-    KVS_MY_MASTER_SENDING_SYNC,     // 正在发送 SYNC 命令
-    KVS_MY_MASTER_WAITING_RES,      // 正在等待 +FULLRESYNC...
-    //KVS_REPL_MASTER_HANDSHAKE,      // 正在进行 PING/AUTH 握手
+    
+    KVS_MY_MASTER_WAIT_CONNECTED,    
+    KVS_MY_MASTER_WAIT_SYNC_RESPONSE,     
+    KVS_MY_MASTER_WAIT_RDMA_ESTABLISHED,    
 
-    // rdma
-    KVS_MY_MASTER_RDMA_CONNECTING, // 正在 RDMA 建联
-    KVS_MY_MASTER_RECEIVING_RDB,   // 正在接收 RDB 文件流
-    KVS_MY_MASTER_RECEIVING_REPLICATION, // 正在接收实时增量命令
-    KVS_MY_MASTER_ONLINE,          // 握手完成，正在接收实时增量命令
+    KVS_MY_MASTER_WAIT_SENT_READY,
+    KVS_MY_MASTER_WAIT_RECV_RDB,
+    KVS_MY_MASTER_WAIT_FWRITE_RDB,
+    KVS_MY_MASTER_WAIT_FSYNC_RDB,
+    KVS_MY_MASTER_WAIT_SENT_ACK,
+    KVS_MY_MASTER_WAIT_SENT_RDB_LOADED_ACK,
+
+    KVS_MY_MASTER_WAIT_RECV_REPL,
+    KVS_MY_MASTER_ONLINE,
     KVS_MY_MASTER_STATE_NUM
 } kvs_my_master_state_t;
+
+/*
+* WAIT_BGSAVE, ON_BGSAVE_END
+* WAIT_RDMA_CONNECT_REQUEST ,ON_RDMA_CONNECT_REQUEST
+* WAIT_RDMA_ESTABLISHED, ON_RDMA_ESTABLISHED
+* WAIT_RDMA_RECV_SLAVE_READY, ON_RDMA_RECV_SLAVE_READY
+* WAIT_RDMA_SEND, ON_RDB_SEND_DONE
+* WAIT_RDMA_RDB_ACK, ON_RDMA_RDB_ACK
+* WAIT_BACKLOG_SEND, ON_BACKLOG_SEND_DONE
+* ONLINE, OFFLINE
+*/
+
 
 // [场景：我是 Master，对方是 Slave] - 管理下发进度
 typedef enum {
     KVS_MY_SLAVE_NONE = 0,
     KVS_MY_SLAVE_WAIT_BGSAVE_END, // 等待后台 RDB 进程结束
-    KVS_MY_SLAVE_WAIT_RDMA_READY,   // 等待 Slave RDMA 准备就绪
-    KVS_MY_SLAVE_WAIT_RECV_READY,   // 等待 Slave 准备接收 RDB
-    KVS_MY_SLAVE_SENDING_RDB,     // 正在发送 RDB 文件流
+    KVS_MY_SLAVE_WAIT_SENT_RDMA_INFO, // 等待发送 RDMA 连接信息
+    KVS_MY_SLAVE_WAIT_RDMA_CONNECT_REQUEST, // 等待 Slave 发起 RDMA 连接请求
+    KVS_MY_SLAVE_WAIT_RDMA_ESTABLISHED, // 等待 RDMA 连接建立完成
+    KVS_MY_SLAVE_WAIT_RDMA_RECV_READY, // 等待 Slave 准备好接收 RDB
+    KVS_MY_SLAVE_WAIT_RDB_SENT,     // 正在发送 RDB 文件流
     KVS_MY_SLAVE_WAIT_RDB_ACK,    // 等待 Slave RDB 接收完成确认
-    KVS_MY_SLAVE_SENDING_BACKLOG, // 正在发送 Backlog 积压数据
+    KVS_MY_SLAVE_WAIT_SLAVE_LOAD_ACK, // 等待 Slave RDB 加载完成确认
+    KVS_MY_SLAVE_WAIT_BACKLOG_SENT, // 正在发送 Backlog 积压数据
     KVS_MY_SLAVE_ONLINE,           // 实时同步状态
     KVS_MY_SLAVE_OFFLINE,          // 离线状态
     KVS_MY_SLAVE_STATE_NUM
@@ -156,6 +185,7 @@ struct kvs_ops_s {
 struct kvs_ctx_header_s{
     kvs_ctx_type_t type;
 	void* next_handler;
+    struct kvs_conn_s *conn;
 	struct kvs_ops_s ops;
 };
 
@@ -170,15 +200,23 @@ struct kvs_my_slave_context_s {
     size_t rdb_size;
     size_t repl_backlog_offset;
     size_t rdb_offset;
-    char *recv_buf;
+
+    char *recv_buf; // buffer for receiving rdb data
+    int recv_buf_sz;
     struct kvs_rdma_mr_s *recv_mr;
+
     uint64_t rdma_token;
 
     int ref_count; // rdma_conn may share this context with tcp_conn
     struct kvs_rdma_conn_s *rdma_conn; // for rdma connection
-    struct kvs_conn_s *tcp_conn; // for tcp connection
 
-    int send_rdb_chunk_size_cur;
+    int sent_size_cur;
+    int recv_size_cur;
+    int buf_offset_cur;
+    int imm_data_cur;
+
+    int processed_sz_cur; // for tcp recv
+    
 };
 
 // context for connections from me (the slave) to master
@@ -191,22 +229,31 @@ struct kvs_my_master_context_s {
     int rdma_port;
     uint64_t token;
     size_t rdb_size;
-    struct kvs_conn_s *rdma_conn; // for rdma connection
-    struct kvs_conn_s *tcp_conn; // for tcp connection
+    struct kvs_rdma_conn_s *rdma_conn; // for rdma connection
+    //struct kvs_conn_s *tcp_conn; // for tcp connection
     struct kvs_event_s connect_ev; // for tcp connect event
 
     char *rdb_recv_buffer;
     int rdb_recv_buffer_count;
     size_t rdb_recv_buf_sz;
     struct kvs_rdma_mr_s *rdb_recv_mr;
+
+    char *send_buf;
+    int send_buf_sz;
+    struct kvs_rdma_mr_s *send_mr;
+
+    int ref_count;
     int rdb_fd;
     size_t rdb_offset;
     struct kvs_event_s rdb_write_ev;
     struct kvs_event_s rdb_fsync_ev;
-    int rdb_recv_buf_offset_cur;
-    int rdb_recv_len_cur;
-    int rdb_imm_data_cur;
+
+    int recv_len_cur;
+    int sent_len_cur;
+    int offset_cur;
+    int imm_data_cur;
     
+    int processed_sz_cur; // for tcp recv
     //int is_post_connect; // whether RDMA connection is established
 };
 
@@ -228,9 +275,14 @@ struct kvs_slave_s {
 
 struct kvs_master_s {
     struct kvs_conn_s **slave_conns; // array of slave connections
-    int slave_count;
+    int slave_count; // current number of connected slaves, including syncing and online
+    int slave_count_online; // current number of online slaves
+    int syncing_rdb_slaves_count; // number of slaves in RDB SYNC process
+    int syncing_slaves_count; // number of slaves in SYNC process
+
+
     int max_slave_count;
-    int slave_count_online;
+    
     char *repl_backlog;
     size_t repl_backlog_size;
     int is_repl_backlog; // 1: write command to repl backlog, 0: not write
@@ -248,7 +300,7 @@ struct kvs_master_s {
 
     struct kvs_session_table_s session_table;
 
-    int syncing_slaves_count; // number of slaves in SYNC process
+    
 
     struct kvs_server_s *server;
 };
@@ -371,10 +423,10 @@ void kvs_handler_on_rdma_error(struct kvs_rdma_conn_s *conn, int event_type, int
 
 
 /************************kvs server internal method*****************************/
-kvs_status_t kvs_server_create_conn_type(struct kvs_server_s *server, struct kvs_conn_header_s *conn, kvs_ctx_type_t ctx_type);
-kvs_status_t kvs_server_destroy_conn_type(struct kvs_server_s *server, struct kvs_conn_header_s *conn);
-kvs_status_t kvs_server_convert_conn_type(struct kvs_server_s *server, struct kvs_conn_header_s *conn, kvs_ctx_type_t new_type);
-kvs_status_t kvs_server_share_conn_type(struct kvs_server_s *server, struct kvs_conn_header_s *src_conn, struct kvs_conn_header_s *dst_conn);
+kvs_status_t kvs_server_create_conn_ctx(struct kvs_server_s *server, struct kvs_conn_header_s *conn, kvs_ctx_type_t ctx_type);
+kvs_status_t kvs_server_destroy_conn_ctx(struct kvs_server_s *server, struct kvs_conn_header_s *conn);
+kvs_status_t kvs_server_convert_conn_ctx(struct kvs_server_s *server, struct kvs_conn_header_s *conn, kvs_ctx_type_t new_type);
+kvs_status_t kvs_server_share_conn_ctx(struct kvs_server_s *server, struct kvs_conn_header_s *src_conn, struct kvs_conn_header_s *dst_conn);
 
 
 int kvs_server_init_signals(struct kvs_server_s *server);
@@ -393,14 +445,14 @@ void kvs_client_on_close(struct kvs_conn_s *conn);
 kvs_status_t kvs_my_slave_on_recv(struct kvs_conn_s *conn, int *read_size);
 kvs_status_t kvs_my_slave_on_send(struct kvs_conn_s *conn, int bytes_sent);
 void kvs_my_slave_on_close(struct kvs_conn_s *conn);
-kvs_status_t kvs_my_slave_on_rdma_send(struct kvs_rdma_conn_s *conn,   size_t send_off_set, int send_len);
-kvs_status_t kvs_my_slave_on_rdma_recv(struct kvs_rdma_conn_s *conn);
+kvs_status_t kvs_my_slave_on_rdma_send(struct kvs_rdma_conn_s *conn, size_t send_off_set, int send_len);
+kvs_status_t kvs_my_slave_on_rdma_recv(struct kvs_rdma_conn_s *conn, size_t recv_off_set, int recv_len, int imm_data);
 
 kvs_status_t kvs_my_master_on_recv(struct kvs_conn_s *conn, int *read_size);
 kvs_status_t kvs_my_master_on_send(struct kvs_conn_s *conn, int bytes_sent);
 void kvs_my_master_on_close(struct kvs_conn_s *conn);
 kvs_status_t kvs_my_master_on_rdma_send(struct kvs_rdma_conn_s *conn,  size_t send_off_set, int send_len);
-kvs_status_t kvs_my_master_on_rdma_recv(struct kvs_rdma_conn_s *conn);
+kvs_status_t kvs_my_master_on_rdma_recv(struct kvs_rdma_conn_s *conn, size_t recv_off_set, int recv_len, int imm_data);
 
 typedef kvs_status_t (*kvs_cmd_handler_pt)(struct kvs_server_s *s, 
                                            struct kvs_handler_cmd_s *cmd, 

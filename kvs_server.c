@@ -26,7 +26,7 @@
 int kvs_server_register_master(struct kvs_server_s *server, int master_fd) {
 	struct kvs_conn_s *conn = NULL;
 	int ret = kvs_net_register_fd(&server->network, master_fd, &conn);
-	kvs_server_create_conn_type(server, (struct kvs_conn_header_s *)conn, KVS_CTX_MASTER_OF_ME);
+	kvs_server_create_conn_ctx(server, (struct kvs_conn_header_s *)conn, KVS_CTX_MASTER_OF_ME);
 	if(ret < 0 || conn == NULL) {
 		return -1;
 	}
@@ -158,7 +158,7 @@ kvs_status_t kvs_server_init_connection(struct kvs_server_s *server, struct kvs_
 
 	
 	LOG_DEBUG("%s:%d new connection accepted, fd: %d", __FILE__, __LINE__, conn->_internal.fd);
-	kvs_server_create_conn_type(server, conn, KVS_CTX_NORMAL_CLIENT);
+	kvs_server_create_conn_ctx(server, conn, KVS_CTX_NORMAL_CLIENT);
 	struct kvs_client_context_s* cli_ctx = (struct kvs_client_context_s*)conn->header.user_data;
 	cli_ctx->state = KVS_CLIENT_STATE_NORMAL; //不应该在这里设置，应该在状态机里设置。
 	// cli_ctx->header.ops.on_recv = kvs_client_on_recv;
@@ -217,14 +217,14 @@ kvs_status_t kvs_server_deinit_connection(struct kvs_server_s *server, struct kv
 		return KVS_ERR;
 	}
 
-	kvs_server_destroy_conn_type(server, conn);
+	kvs_server_destroy_conn_ctx(server, conn);
 
 	return KVS_OK;
 }
 
 
 
-kvs_status_t kvs_server_destroy_conn_type(struct kvs_server_s *server, struct kvs_conn_header_s *conn) {
+kvs_status_t kvs_server_destroy_conn_ctx(struct kvs_server_s *server, struct kvs_conn_header_s *conn) {
 	if(server == NULL || conn == NULL) {
 		return KVS_ERR;
 	}
@@ -270,6 +270,17 @@ kvs_status_t kvs_server_destroy_conn_type(struct kvs_server_s *server, struct kv
 				assert(0);
 				return KVS_ERR;
 			}
+			struct kvs_my_master_context_s* master_ctx = (struct kvs_my_master_context_s*)ctx_header;
+			master_ctx->ref_count --;
+			LOG_INFO("master_ctx ref_count decremented, new ref_count: %d", master_ctx->ref_count);
+			if(master_ctx->ref_count > 0) {
+				LOG_DEBUG("master_ctx ref_count > 0, not destroying, ref_count: %d", master_ctx->ref_count);
+				return KVS_OK;
+			} else if(master_ctx->ref_count < 0) {
+				LOG_FATAL("master_ctx ref_count < 0, invalid state");
+				assert(0);
+				return KVS_ERR;
+			}
 			//assert(0); // todo: slave side master connection destroy
 			kvs_free(ctx_header, sizeof(struct kvs_my_master_context_s));
 			conn->user_data = NULL;
@@ -283,7 +294,7 @@ kvs_status_t kvs_server_destroy_conn_type(struct kvs_server_s *server, struct kv
 	return KVS_OK;
 }
 
-kvs_status_t kvs_server_share_conn_type(struct kvs_server_s *server, struct kvs_conn_header_s *src_conn, struct kvs_conn_header_s *dst_conn) {
+kvs_status_t kvs_server_share_conn_ctx(struct kvs_server_s *server, struct kvs_conn_header_s *src_conn, struct kvs_conn_header_s *dst_conn) {
 	if(server == NULL || src_conn == NULL || dst_conn == NULL) {
 		return KVS_ERR;
 	}
@@ -291,25 +302,36 @@ kvs_status_t kvs_server_share_conn_type(struct kvs_server_s *server, struct kvs_
 	struct kvs_ctx_header_s* src_ctx_header = (struct kvs_ctx_header_s*)src_conn->user_data;
 	if(src_ctx_header == NULL) {
 		LOG_FATAL("src_ctx_header is NULL");
-		assert(0);
 		return KVS_ERR;
 	}
 
-	if(src_ctx_header->type != KVS_CTX_SLAVE_OF_ME) {
-		LOG_FATAL("can not share conn type from type: %d", src_ctx_header->type);
-		assert(0);
+	// if(src_ctx_header->type != KVS_CTX_SLAVE_OF_ME) {
+	// 	LOG_FATAL("can not share conn type from type: %d", src_ctx_header->type);
+	// 	return KVS_ERR;
+	// }
+
+	int type = src_ctx_header->type;
+	if(type == KVS_CTX_SLAVE_OF_ME) {
+		dst_conn->user_data = src_conn->user_data;
+		struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)src_ctx_header;
+		slave_ctx->ref_count ++;
+		LOG_DEBUG("shared slave_ctx, new ref_count: %d", slave_ctx->ref_count);
+	} else if(type == KVS_CTX_MASTER_OF_ME) {
+		dst_conn->user_data = src_conn->user_data;
+		struct kvs_my_master_context_s* master_ctx = (struct kvs_my_master_context_s*)src_ctx_header;
+		master_ctx->ref_count ++;
+		LOG_DEBUG("shared master_ctx, new ref_count: %d", master_ctx->ref_count);
+	} else {
+		LOG_FATAL("invalid ctx type: %d", type);
 		return KVS_ERR;
 	}
 
-	dst_conn->user_data = src_conn->user_data;
-	struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)src_ctx_header;
-	slave_ctx->ref_count ++;
-	LOG_DEBUG("shared slave_ctx, new ref_count: %d", slave_ctx->ref_count);
+	
 
 	return KVS_OK;
 }
 
-kvs_status_t kvs_server_create_conn_type(struct kvs_server_s *server, struct kvs_conn_header_s *conn, kvs_ctx_type_t ctx_type) {
+kvs_status_t kvs_server_create_conn_ctx(struct kvs_server_s *server, struct kvs_conn_header_s *conn, kvs_ctx_type_t ctx_type) {
 	if(server == NULL || conn == NULL) {
 		return KVS_ERR;
 	}
@@ -322,6 +344,7 @@ kvs_status_t kvs_server_create_conn_type(struct kvs_server_s *server, struct kvs
 		return -1;
 	}
 
+
 	switch(ctx_type) {
 		case KVS_CTX_NORMAL_CLIENT:
 			ctx_header = (struct kvs_ctx_header_s*)kvs_malloc(sizeof(struct kvs_client_context_s));
@@ -329,6 +352,7 @@ kvs_status_t kvs_server_create_conn_type(struct kvs_server_s *server, struct kvs
 				LOG_FATAL("malloc ctx_header failed");
 				assert(0);
 			}
+			memset(ctx_header, 0, sizeof(struct kvs_client_context_s));
 			ctx_header->type = KVS_CTX_NORMAL_CLIENT;
 			conn->user_data = (void*)ctx_header;
 			//((struct kvs_client_context_s*)conn->user_data)->state = KVS_CLIENT_STATE_NORMAL;
@@ -338,29 +362,30 @@ kvs_status_t kvs_server_create_conn_type(struct kvs_server_s *server, struct kvs
 			cli_ctx->header.ops.on_send = kvs_client_on_send;
 			cli_ctx->header.ops.on_close = kvs_client_on_close;
 			cli_ctx->header.ops.name = "kvs_client_ops";
+			cli_ctx->header.conn = (struct kvs_conn_s *)conn;
 
 			break;
-		case KVS_CTX_SLAVE_OF_ME:
-			ctx_header = (struct kvs_ctx_header_s*)kvs_malloc(sizeof(struct kvs_my_slave_context_s));
-			if(ctx_header == NULL) {
-				LOG_FATAL("malloc ctx_header failed");
-				assert(0);
+		case KVS_CTX_SLAVE_OF_ME: {
+				struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)kvs_malloc(sizeof(struct kvs_my_slave_context_s));
+				if(slave_ctx == NULL) {
+					LOG_FATAL("malloc ctx_header failed");
+				}
+				memset(slave_ctx, 0, sizeof(struct kvs_my_slave_context_s));
+				slave_ctx->header.type = KVS_CTX_SLAVE_OF_ME;
+				//conn->user_data = (void*)ctx_header;
+				// ((struct kvs_my_slave_context_s*)conn->user_data)->state = KVS_MY_SLAVE_NONE;
+				slave_ctx->state = KVS_MY_SLAVE_NONE;
+				slave_ctx->header.ops.on_recv = kvs_my_slave_on_recv;
+				slave_ctx->header.ops.on_send = kvs_my_slave_on_send;
+				slave_ctx->header.ops.on_close = kvs_my_slave_on_close;
+				slave_ctx->header.ops.name = "kvs_my_slave_ops";
+				slave_ctx->ref_count = 1;
+				slave_ctx->slave_idx = -1; // will be assigned later
+				slave_ctx->master = server->master; // back reference to master
+				slave_ctx->header.conn = (struct kvs_conn_s *)conn;
+				conn->user_data = (void*)slave_ctx;
+				LOG_INFO("created slave_ctx, ref_count: %d", slave_ctx->ref_count);
 			}
-			ctx_header->type = KVS_CTX_SLAVE_OF_ME;
-			conn->user_data = (void*)ctx_header;
-			//conn->user_data = (void*)ctx_header;
-			// ((struct kvs_my_slave_context_s*)conn->user_data)->state = KVS_MY_SLAVE_NONE;
-			struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
-			slave_ctx->state = KVS_MY_SLAVE_NONE;
-			slave_ctx->header.ops.on_recv = kvs_my_slave_on_recv;
-			slave_ctx->header.ops.on_send = kvs_my_slave_on_send;
-			slave_ctx->header.ops.on_close = kvs_my_slave_on_close;
-			slave_ctx->header.ops.name = "kvs_my_slave_ops";
-			slave_ctx->ref_count = 1;
-			slave_ctx->slave_idx = -1; // will be assigned later
-			slave_ctx->master = server->master; // back reference to master
-			LOG_WARN("created slave_ctx, ref_count: %d", slave_ctx->ref_count);
-
 			break;
 		case KVS_CTX_MASTER_OF_ME:{
 			//assert(0); // not used in server side
@@ -369,6 +394,7 @@ kvs_status_t kvs_server_create_conn_type(struct kvs_server_s *server, struct kvs
 					LOG_FATAL("malloc ctx_header failed");
 					assert(0);
 				}
+				memset(master_ctx, 0, sizeof(struct kvs_my_master_context_s));
 				master_ctx->header.type = KVS_CTX_MASTER_OF_ME;
 				//conn->user_data = (void*)master_ctx;
 				master_ctx->state = KVS_MY_MASTER_NONE;
@@ -377,7 +403,10 @@ kvs_status_t kvs_server_create_conn_type(struct kvs_server_s *server, struct kvs
 				master_ctx->header.ops.on_close = kvs_my_master_on_close;
 				master_ctx->header.ops.name = "kvs_my_master_ops";
 				master_ctx->slave = server->slave; // back reference to slave
+				master_ctx->header.conn = (struct kvs_conn_s *)conn;
 				conn->user_data = (void*)master_ctx;
+				master_ctx->ref_count = 1;
+				LOG_INFO("created master_ctx, ref_count: %d", master_ctx->ref_count);
 			}
 			break;
 		default:
@@ -386,10 +415,11 @@ kvs_status_t kvs_server_create_conn_type(struct kvs_server_s *server, struct kvs
 			return KVS_ERR;
 	}
 
+
 	return KVS_OK;
 }
 
-kvs_status_t kvs_server_convert_conn_type(struct kvs_server_s *server, struct kvs_conn_header_s *conn, kvs_ctx_type_t new_type) {
+kvs_status_t kvs_server_convert_conn_ctx(struct kvs_server_s *server, struct kvs_conn_header_s *conn, kvs_ctx_type_t new_type) {
 	if(server == NULL || conn == NULL) {
 		return KVS_ERR;
 	}
@@ -419,20 +449,7 @@ kvs_status_t kvs_server_convert_conn_type(struct kvs_server_s *server, struct kv
 			kvs_free(ctx_header, sizeof(struct kvs_client_context_s));
 			conn->user_data = NULL;
 			//struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)kvs_malloc(sizeof(struct kvs_my_slave_context_s));
-			kvs_server_create_conn_type(server, conn, KVS_CTX_SLAVE_OF_ME);
-			// memset(slave_ctx, 0, sizeof(struct kvs_my_slave_context_s));
-			// slave_ctx->header.type = KVS_CTX_SLAVE_OF_ME;
-			// conn->user_data = (void*)slave_ctx;
-			// slave_ctx->state = KVS_MY_SLAVE_NONE;
-			// // conn->ops.name = "kvs_my_slave_ops";
-			// // conn->ops.on_recv = kvs_my_slave_on_recv;
-			// // conn->ops.on_send = kvs_my_slave_on_send;
-			// // conn->ops.on_close = kvs_my_slave_on_close;
-			// slave_ctx->header.ops.on_recv = kvs_my_slave_on_recv;
-			// slave_ctx->header.ops.on_send = kvs_my_slave_on_send;
-			// slave_ctx->header.ops.on_close = kvs_my_slave_on_close;
-			// slave_ctx->header.ops.name = "kvs_my_slave_ops";
-			// slave_ctx->slave_idx = -1; // will be assigned later
+			kvs_server_create_conn_ctx(server, conn, KVS_CTX_SLAVE_OF_ME);
 			break;
 		default:
 			LOG_FATAL("invalid new ctx type: %d", new_type);

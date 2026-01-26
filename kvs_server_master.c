@@ -20,100 +20,6 @@
 #define KVS_MAX_SLAVES_DEFAULT 128
 //#define RDMA_MAX_CHUNK_SIZE (16 * 1024 * 1024) // 16MB
 
-static inline kvs_status_t _kvs_master_slave_sync_begin(struct kvs_master_s *master) {
-    if(master == NULL) {
-        assert(0);
-        return KVS_ERR;
-    }
-    LOG_DEBUG("_kvs_master_slave_sync_begin called, syncing_slaves_count: %d", master->syncing_slaves_count);
-    // increase syncing slave count
-    master->syncing_slaves_count += 1;
-    if(master->syncing_slaves_count == 1) {
-        // first syncing slave, open rdb fd
-        if(master->rdb_fd > 0) {
-            close(master->rdb_fd);
-            master->rdb_fd = -1;
-        }
-        master->rdb_fd = open(master->server->pers_ctx->rdb_filename, O_RDONLY);
-        struct stat rdb_st;
-        fstat(master->rdb_fd, &rdb_st);
-        master->rdb_size = rdb_st.st_size;
-
-        //int rdb_max_chunk_size = master->server->rdma_max_chunk_size;
-
-        // register mmap to RDMA engine if needed
-        LOG_DEBUG("Master server use_rdma: %d", master->server->use_rdma);
-        if(master->server->use_rdma) {
-            master->rdb_mmap = mmap(NULL, master->rdb_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, master->rdb_fd, 0);
-            if(master->rdb_mmap == MAP_FAILED) {
-                LOG_FATAL("mmap RDB file failed: %s", strerror(errno));
-                assert(0);
-                return KVS_ERR;
-            }
-            madvise(master->rdb_mmap, rdb_st.st_size, MADV_SEQUENTIAL);
-            //struct ibv_mr *mr = kvs_rdma_register_memory(&master->server->network.rdma_engine, master->rdb_mmap, master->rdb_size, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ);
-            struct kvs_rdma_mr_s *mr = kvs_rdma_register_memory(&master->server->rdma_engine, master->rdb_mmap, 
-                    master->rdb_size, KVS_RDMA_OP_SEND);
-            LOG_DEBUG("Registered RDMA memory for RDB mmap, addr: %p, size: %zu", master->rdb_mmap, master->rdb_size);
-            if(mr == NULL) {
-                LOG_FATAL("kvs_rdma_register_memory failed");
-                assert(0);
-                return KVS_ERR;
-            }
-            master->rdb_mr = mr;
-        }
-
-
-        if(master->rdb_fd < 0) {
-            LOG_FATAL("open rdb file %s failed: %s", master->server->pers_ctx->rdb_filename, strerror(errno));
-            assert(0);
-            return KVS_ERR;
-        }
-        master->is_repl_backlog = 1; // start writing to repl backlog
-        master->repl_backlog_idx = 0; // reset repl backlog index
-        master->repl_backlog_overflow = 0;
-
-        
-    }
-    
-
-    return KVS_OK;
-}
-
-static inline kvs_status_t _kvs_master_slave_sync_end(struct kvs_master_s *master) {
-    if(master == NULL) {
-        assert(0);
-        return KVS_ERR;
-    }
-
-    
-    master->syncing_slaves_count -= 1;
-    if(master->syncing_slaves_count < 0) {
-        LOG_FATAL("syncing_slaves_count < 0");
-        assert(0);
-        return KVS_ERR;
-    } else if(master->syncing_slaves_count == 0) {
-        // all syncing slaves finished, close rdb fd
-        if(master->server->use_rdma && master->rdb_mmap != NULL) {
-            LOG_DEBUG("Deregistering RDMA memory for RDB mmap");
-            kvs_rdma_deregister_memory(master->rdb_mr);
-            munmap(master->rdb_mmap, master->rdb_size);
-            master->rdb_mmap = NULL;
-        }
-        if(master->rdb_fd > 0) {
-            close(master->rdb_fd);
-            master->rdb_fd = -1;
-        }
-        
-
-        master->rdb_fd = -1; 
-        master->repl_backlog_idx = 0; // reset backlog
-        master->is_repl_backlog = 0; // stop writing to repl backlog
-        master->repl_backlog_overflow = 0;
-    }
-
-    return KVS_OK;
-}
 
 kvs_status_t kvs_master_add_slave(struct kvs_master_s *master, struct kvs_conn_s *conn);
 kvs_status_t _kvs_repl_slave_sending_rdb_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger);
@@ -136,6 +42,7 @@ kvs_status_t kvs_master_init(struct kvs_master_s *master, struct kvs_server_s *s
         return KVS_ERR;
     }
     memset(master->repl_backlog, 0, master->repl_backlog_size);
+    master->syncing_rdb_slaves_count = 0;
     master->syncing_slaves_count = 0;
     //master->repl_backlog = NULL;
     master->repl_backlog_idx = 0;
@@ -170,53 +77,106 @@ kvs_status_t kvs_master_deinit(struct kvs_master_s *master) {
 }
 
 
-
-kvs_status_t _kvs_repl_slave_none_handler(struct kvs_master_s *master, struct kvs_conn_header_s *slave_conn, kvs_event_trigger_t trigger) {
+static void _kvs_master_start_repl_buf_saving(struct kvs_master_s *master) {
+    master->syncing_slaves_count ++;
+    if(master->syncing_slaves_count == 1) {
+        master->is_repl_backlog = 1;
+        master->repl_backlog_idx = 0;
+        master->repl_backlog_overflow = 0;
+        LOG_DEBUG("Started repl backlog saving for first syncing slave");
+    } else {
+        LOG_DEBUG("syncing_slaves_count %d > 1, repl backlog already started", master->syncing_slaves_count);
+    }
    
-    if(slave_conn->type != KVS_CONN_TCP) {
-        LOG_FATAL("invalid conn type for slave none handler: %d", slave_conn->type);
-        assert(0);
+}
+
+static void _kvs_master_stop_repl_buf_saving(struct kvs_master_s *master) {
+    master->syncing_slaves_count --;
+    if(master->syncing_slaves_count == 0) {
+        master->is_repl_backlog = 0;
+        master->repl_backlog_idx = 0;
+        master->repl_backlog_overflow = 0;
+        LOG_DEBUG("Stopped repl backlog saving, no more syncing slaves");
+    } else {
+        LOG_DEBUG("syncing_slaves_count %d > 0, repl backlog still needed", master->syncing_slaves_count);
+    }
+}
+
+static kvs_status_t _on_slave_none(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    if(trigger != KVS_EVENT_TRIGGER_MANUAL) {
+        LOG_FATAL("invalid trigger for slave none handler: %d", trigger);
         return KVS_ERR;
     }
-    //struct kvs_conn_s *conn = (struct kvs_conn_s *)slave_conn;
-    // 1. check if can accept new slave
+    // 1. 错误处理
+    if(conn->type != KVS_CONN_TCP || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
+        return KVS_ERR;
+    }
+
+    
+    // 2. 事件完成，处理事件
     if(master->slave_count >= master->max_slave_count) {
         // slave limit reached
         LOG_WARN("slave limit reached");
-        // todo : return more error info to slave
-        return KVS_QUIT;
+        return KVS_QUIT; // disconnect slave
     }
-    master->slave_count ++;
 
+    master->slave_count ++; // current number of connected slaves, including syncing and online
+    //master->syncing_slaves_count ++ ; // number of slaves in SYNC process
+    _kvs_master_start_repl_buf_saving(master);
 
-    if(slave_conn == NULL) assert(0);
-    if(slave_conn->user_data == NULL) assert(0);
-    struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)slave_conn->user_data;
+    struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME || slave_ctx->slave_idx != -1) {
         LOG_FATAL("invalid slave state: %d", slave_ctx->header.type);
-        assert(0);
         return KVS_ERR;
     }
 
-    LOG_DEBUG("Adding new slave, current slave count: %d", master->slave_count);
-    int ret = 0;
-    // 2. start RDB save if not in progress
-    if(master->server->rdb_child_pid <= 0) {
-        // no RDB save in progress, start a new one
-        ret = kvs_server_save_rdb_fork(master->server);
-        if(ret != KVS_OK) {
-            LOG_FATAL("kvs_server_save_rdb_fork failed");
-            assert(0);
-            return KVS_ERR;
-        }
-    }
-    slave_ctx->state = KVS_MY_SLAVE_WAIT_BGSAVE_END;
-    
+    LOG_DEBUG("Adding new slave, current syncing slave count: %d/%d", master->syncing_slaves_count, master->slave_count);
 
-    return KVS_OK;
+    
+    // 3. 状态转换
+    slave_ctx->state = KVS_MY_SLAVE_WAIT_BGSAVE_END;
+    struct kvs_conn_s *slave_conn = (struct kvs_conn_s *)conn;
+    LOG_INFO("Slave fd %d entered SYNC state, waiting for BGSAVE to complete", slave_conn->_internal.fd);
+
+
+    // 4. 注册事件
+    int ret = 0;
+    if(master->syncing_slaves_count == 1) {
+        if(master->server->rdb_child_pid <= 0 ) {
+            // no RDB save in progress, start a new one
+            ret = kvs_server_save_rdb_fork(master->server);
+            if(ret != KVS_OK) {
+                LOG_FATAL("kvs_server_save_rdb_fork failed");
+                return KVS_ERR;
+            }
+
+            //_kvs_master_start_repl_buf_saving(master);
+            LOG_DEBUG("Started new RDB save and repl backlog for first syncing slave");
+
+            return KVS_OK;
+        } else {
+            LOG_DEBUG("RDB save already in progress, slave will wait for it to finish");
+            return KVS_OK;
+        }
+    } else if(master->syncing_slaves_count > 1) {
+        if(master->server->rdb_child_pid <= 0 ) {
+            // 如果同步的从节点数量大于1，且RDB保存已经完成，直接开始传输RDB
+            LOG_DEBUG("RDB already finished, notifying slave to start RDB transfer, current syncing_slaves_count: %d", master->syncing_slaves_count);
+            return KVS_STATUS_CONTINUE; 
+        } else if(master->server->rdb_child_pid > 0 ) {
+            LOG_DEBUG("RDB save already in progress, slave will wait for it to finish, current syncing_slaves_count: %d", master->syncing_slaves_count);
+            return KVS_OK;
+        }
+        return KVS_OK;
+    } else {
+        LOG_FATAL("syncing_slaves_count < 0, syncing_slaves_count: %d", master->syncing_slaves_count);
+        return KVS_ERR;
+    }
 }
 
 
+#if 0
 kvs_status_t _kvs_repl_slave_wait_bgsave_end_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
     if(conn == NULL || conn->user_data == NULL) {
         assert(0);
@@ -241,19 +201,16 @@ kvs_status_t _kvs_repl_slave_wait_bgsave_end_handler(struct kvs_master_s *master
 
     // RDB save finished
     
-    if(master->rdb_fd > 0 && master->syncing_slaves_count == 0) {
+    if(master->rdb_fd > 0 && master->syncing_rdb_slaves_count == 0) {
         close(master->rdb_fd);
     }
 
 
     //LOG_INFO("RDB save finished, start sending RDB to slave fd %d", conn->_internal.fd);
     // 动作：切换状态，开始发文件
-    slave_ctx->state = KVS_MY_SLAVE_SENDING_RDB;
+    slave_ctx->state = KVS_MY_SLAVE_WAIT_SENDING_RDB;
     return KVS_STATUS_CONTINUE; // trigger sending immediately
 }
-
-
-
 kvs_status_t _kvs_repl_slave_sending_rdb_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
     if(conn->type != KVS_CONN_TCP) {
         LOG_FATAL("invalid conn type for slave sending rdb handler: %d", conn->type);
@@ -307,17 +264,106 @@ kvs_status_t _kvs_repl_slave_sending_rdb_handler(struct kvs_master_s *master, st
     /************** rdma发送 **************/
     return KVS_OK;
 }
+#endif
 
-kvs_status_t _kvs_repl_rdma_slave_wait_bgsave_end_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
-    if(conn == NULL || conn->user_data == NULL) {
+static kvs_status_t _kvs_master_open_rdb(struct kvs_master_s *master) {
+    if(master == NULL) {
         assert(0);
         return KVS_ERR;
     }
-    if(conn->type != KVS_CONN_TCP) {
-        LOG_FATAL("invalid conn type for rdma slave wait bgsave end handler: %d", conn->type);
+    if(master->rdb_fd > 0) {
+        LOG_FATAL("rdb_fd already opened: %d", master->rdb_fd);
+    }
+    master->rdb_fd = open(master->server->pers_ctx->rdb_filename, O_RDWR);
+    struct stat rdb_st;
+    fstat(master->rdb_fd, &rdb_st);
+    master->rdb_size = rdb_st.st_size;
+
+    return KVS_OK;
+}
+
+static kvs_status_t _kvs_master_close_rdb(struct kvs_master_s *master) {
+    if(master == NULL) {
         assert(0);
         return KVS_ERR;
     }
+    if(master->rdb_fd > 0) {
+        close(master->rdb_fd);
+        master->rdb_fd = -1;
+    }
+    return KVS_OK;
+}
+
+
+static kvs_status_t _on_rdb_sent_begin(struct kvs_master_s *master) {
+    master->syncing_rdb_slaves_count += 1;
+    if(master->syncing_rdb_slaves_count == 1) {
+        _kvs_master_open_rdb(master);
+        if(master->server->use_rdma) {
+            master->rdb_mmap = mmap(NULL, master->rdb_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, master->rdb_fd, 0);
+            if(master->rdb_mmap == MAP_FAILED) {
+                LOG_FATAL("mmap RDB file failed: %s", strerror(errno));
+                return KVS_ERR;
+            }
+            madvise(master->rdb_mmap, master->rdb_size, MADV_SEQUENTIAL);
+            //struct ibv_mr *mr = kvs_rdma_register_memory(&master->server->network.rdma_engine, master->rdb_mmap, master->rdb_size, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ);
+            struct kvs_rdma_mr_s *mr = kvs_rdma_register_memory(&master->server->rdma_engine, master->rdb_mmap, 
+                    master->rdb_size, KVS_RDMA_OP_SEND);
+            LOG_DEBUG("Registered RDMA memory for RDB mmap, addr: %p, size: %zu", master->rdb_mmap, master->rdb_size);
+            if(mr == NULL) {
+                LOG_FATAL("kvs_rdma_register_memory failed");
+                return KVS_ERR;
+            }
+            master->rdb_mr = mr;
+        }
+    } else {
+        LOG_DEBUG("RDB already mmaped for other syncing slaves, current syncing_rdb_slaves_count: %d", master->syncing_rdb_slaves_count);
+    }
+
+    return KVS_OK;
+}
+
+static kvs_status_t _on_rdb_sent_end(struct kvs_master_s *master) {
+    master->syncing_rdb_slaves_count -= 1;
+    if(master->syncing_rdb_slaves_count < 0) {
+        LOG_FATAL("syncing_rdb_slaves_count < 0");
+        return KVS_ERR;
+    } else if(master->syncing_rdb_slaves_count == 0) {
+        // all syncing slaves finished, close rdb fd
+        if(master->server->use_rdma && master->rdb_mmap != NULL) {
+            LOG_DEBUG("Deregistering RDMA memory for RDB mmap");
+            kvs_rdma_deregister_memory(master->rdb_mr);
+            master->rdb_mr = NULL;
+            munmap(master->rdb_mmap, master->rdb_size);
+            master->rdb_mmap = NULL;
+
+            _kvs_master_close_rdb(master);
+        }
+    } else {
+        LOG_DEBUG("There are still syncing slaves, current syncing_rdb_slaves_count: %d", master->syncing_rdb_slaves_count);
+    }
+
+    return KVS_OK;
+}
+
+static kvs_status_t _on_bgsave_end(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    // 1. 错误处理
+    if(trigger != KVS_EVENT_BGSAVE_DONE) {
+        LOG_FATAL("invalid trigger: %d", trigger);
+        return KVS_ERR;
+    }
+    if(conn->type != KVS_CONN_TCP || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
+        return KVS_ERR;
+    }
+
+    if(master->server->rdb_child_pid > 0  ) {
+        // slave到这里后，然后client发送save命令，导致rdb_child_pid被重新设置，但是并没有影响slave的rdb传输
+        LOG_WARN("RDB save still in progress");
+        //return KVS_ERR; // still saving
+    }
+
+
     struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
         LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
@@ -325,74 +371,142 @@ kvs_status_t _kvs_repl_rdma_slave_wait_bgsave_end_handler(struct kvs_master_s *m
         return KVS_ERR;
     }
 
-    if(master->server->rdb_child_pid > 0) {
-        assert(0);
-        return KVS_ERR; // still saving
-    }
-
-    // RDB save finished
     
-    if(master->rdb_fd > 0 && master->syncing_slaves_count == 0) {
-        close(master->rdb_fd);
-    }
+    //2 . 事件完成，处理事件
+    struct kvs_conn_s *slave_conn = (struct kvs_conn_s *)conn;
+    LOG_DEBUG("RDB save finished, start sending RDB to slave fd %d", slave_conn->_internal.fd);
+
+    
+
+    //3. 状态转换
+    slave_ctx->state = KVS_MY_SLAVE_WAIT_SENT_RDMA_INFO;
+    LOG_INFO("Slave fd %d BGSAVE completed, wait for RDMA info sent", slave_conn->_internal.fd);
 
 
-    //LOG_INFO("RDB save finished, start sending RDB to slave fd %d", conn->_internal.fd);
-    // 动作：切换状态，开始发文件
-    //slave_ctx->state = KVS_MY_SLAVE_SENDING_RDB;
-    //return KVS_STATUS_CONTINUE; // trigger sending immediately
-    //char *ip = conn->_internal.net->rdma.rdma_ip;
-    int port = master->server->rdma_engine.rdma_port;
-
-    struct stat rdb_st;
+    //4. 注册事件
     int fd = open(master->server->pers_ctx->rdb_filename, O_RDONLY);
-    if(fd < 0) {
-        LOG_FATAL("open rdb file %s failed: %s", master->server->pers_ctx->rdb_filename, strerror(errno));
-        assert(0);
-        return KVS_ERR;
-    }
+    struct stat rdb_st;
     fstat(fd, &rdb_st);
-    master->rdb_size = rdb_st.st_size;
-
+    size_t size = rdb_st.st_size;
+    master->rdb_size = size;
     close(fd);
     
-    // send RDMA info to slave
-    // +FULLRESYNC <rdma_port> <token> <rdb_size>\r\n
-    //slave_ctx->rdma_token = kvs_generate_token(); // todo: should not access _internal directly !!
+
+    int port = master->server->rdma_engine.rdma_port;
     slave_ctx->rdma_token = kvs_session_register(&master->session_table, (void*)slave_ctx); // register session in
-    slave_ctx->tcp_conn = (struct kvs_conn_s *)conn;
-
     LOG_DEBUG("Sending RDMA FULLRESYNC to slave: port=%d, token=%zu, rdb_size=%zu", 
-        port, slave_ctx->rdma_token, master->rdb_size);
+        port, slave_ctx->rdma_token, size);
 
-    struct kvs_conn_s *conn_tcp = (struct kvs_conn_s *)conn;
-    int len = snprintf(conn_tcp->s_buffer, conn_tcp->s_buf_sz, "+FULLRESYNC %d %zu %zu\r\n", port, slave_ctx->rdma_token, master->rdb_size);
+    struct kvs_conn_s *conn_tcp = (struct kvs_conn_s *)slave_ctx->header.conn;
+    // +FULLRESYNC <rdma_port> <token> <rdb_size>\r\n
+    int len = snprintf(conn_tcp->s_buffer, conn_tcp->s_buf_sz, "+FULLRESYNC %d %zu %zu\r\n", port, slave_ctx->rdma_token, size);
     conn_tcp->s_idx += len;
-    kvs_net_set_send_event_manual(conn_tcp);
 
-    slave_ctx->state = KVS_MY_SLAVE_WAIT_RDMA_READY;
+    kvs_net_set_send_event_manual(conn_tcp);
     
     return KVS_OK;
 }
 
-kvs_status_t _kvs_repl_begin_wait_slave_recv_ready(struct kvs_master_s *master, struct kvs_my_slave_context_s *slave_ctx) {
+static kvs_status_t _on_rdma_info_sent(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    if(trigger != KVS_EVENT_WRITE_DONE) {
+        LOG_FATAL("invalid trigger: %d", trigger);
+        return KVS_ERR;
+    }
+    // 1. 错误处理
+   if(conn->type != KVS_CONN_TCP || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
+        return KVS_ERR;
+    }
+
+    struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        assert(0);
+        return KVS_ERR;
+    }
+
+    
+    //2 . 事件完成，处理事件
+    struct kvs_conn_s *slave_conn = (struct kvs_conn_s *)conn;
+    LOG_DEBUG("RDMA info sent to slave fd %d, now wait for RDMA connection", slave_conn->_internal.fd);
+
+    //3. 状态转换
+    slave_ctx->state = KVS_MY_SLAVE_WAIT_RDMA_CONNECT_REQUEST;
+
+    //4. 注册事件
+    return KVS_OK; // 等待slave主动连接RDMA
+}
+
+static kvs_status_t _on_rdma_connect_request(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    // 1. 错误处理
+    if(trigger != KVS_EVENT_CONNECTED) {
+        LOG_FATAL("invalid trigger: %d", trigger);
+        return KVS_ERR;
+    }
+
+    if(conn->type != KVS_CONN_RDMA || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
+        return KVS_ERR;
+    }
+
+    if(conn->user_data != NULL) {
+        LOG_FATAL("conn user_data already set in rdma connect request");
+        return KVS_ERR;
+    }
+
+    // 2. 事件完成，处理事件, 收到slave的rdma连接请求
+    struct kvs_rdma_conn_s *rdma_conn = (struct kvs_rdma_conn_s *)conn;
+    if(rdma_conn->header.user_data != NULL) {
+        LOG_FATAL("rdma_conn user_data already set in rdma connect request handler");
+        return KVS_ERR;
+    }
+    
+    uint64_t *received_token = (uint64_t*)rdma_conn->private_data;
+    LOG_DEBUG("Received token from slave: %zu", *received_token);
+    struct kvs_my_slave_context_s *matched_ctx = kvs_session_match(&master->session_table, *received_token); // remove token from session table
+    if(matched_ctx == NULL) {
+        LOG_FATAL("no matching session for token: %lu", *received_token);
+        return KVS_QUIT; // rdma_reject connection
+    }
+
+    kvs_server_share_conn_ctx(master->server, (struct kvs_conn_header_s *)matched_ctx->header.conn, (struct kvs_conn_header_s *)rdma_conn);
+    
+    matched_ctx->rdma_conn = rdma_conn;
+
+    // 3. 状态转换
+    matched_ctx->state = KVS_MY_SLAVE_WAIT_RDMA_ESTABLISHED;
+    LOG_DEBUG("RDMA connection established for slave idx %d, wait for RDMA established event", matched_ctx->slave_idx);
+
+    // 4. 注册事件 返回0后rdma engine中注册了accept事件
+    return KVS_OK; // rdma_accept connection
+}
+
+kvs_status_t _kvs_master_alloc_rdma_resources_for_slave(struct kvs_master_s *master, struct kvs_my_slave_context_s *slave_ctx) {
     if(master == NULL || slave_ctx == NULL) {
         assert(0);
         return KVS_ERR;
     }
-    LOG_DEBUG("_kvs_repl_begin_wait_slave_recv_ready called for slave idx %d", slave_ctx->slave_idx);
-    slave_ctx->recv_buf = (char *)kvs_malloc(slave_ctx->master->server->rdma_max_chunk_size);
-    slave_ctx->recv_mr = kvs_rdma_register_memory(&master->server->rdma_engine, NULL, slave_ctx->rdb_size, KVS_RDMA_OP_RECV);
-
+    LOG_DEBUG("_kvs_master_alloc_rdma_resources_for_slave called for slave idx %d", slave_ctx->slave_idx);
+    // allocate RDMA resources for slave
+    slave_ctx->rdb_size = master->rdb_size;
+    slave_ctx->recv_buf = (char *)kvs_malloc(master->server->rdma_max_chunk_size);
+    memset(slave_ctx->recv_buf, 0, master->server->rdma_max_chunk_size);
+    slave_ctx->recv_buf_sz = master->server->rdma_max_chunk_size;
+    slave_ctx->recv_mr = kvs_rdma_register_memory(&master->server->rdma_engine, slave_ctx->recv_buf, master->server->rdma_max_chunk_size, KVS_RDMA_OP_RECV);
+    if(slave_ctx->recv_mr == NULL) {
+        LOG_FATAL("kvs_rdma_register_memory failed for slave idx %d", slave_ctx->slave_idx);
+        return KVS_ERR;
+    }
     return KVS_OK;
 }
 
-kvs_status_t _kvs_repl_end_wait_slave_recv_ready(struct kvs_master_s *master, struct kvs_my_slave_context_s *slave_ctx) {
+kvs_status_t _kvs_master_free_rdma_resources_for_slave(struct kvs_master_s *master, struct kvs_my_slave_context_s *slave_ctx) {
     if(master == NULL || slave_ctx == NULL) {
         assert(0);
         return KVS_ERR;
     }
-    LOG_DEBUG("_kvs_repl_end_wait_slave_recv_ready called for slave idx %d", slave_ctx->slave_idx);
+    LOG_DEBUG("_kvs_master_free_rdma_resources_for_slave called for slave idx %d", slave_ctx->slave_idx);
+    // free RDMA resources for slave
     if(slave_ctx->recv_mr != NULL) {
         kvs_rdma_deregister_memory(slave_ctx->recv_mr);
         slave_ctx->recv_mr = NULL;
@@ -400,233 +514,312 @@ kvs_status_t _kvs_repl_end_wait_slave_recv_ready(struct kvs_master_s *master, st
     if(slave_ctx->recv_buf != NULL) {
         kvs_free(slave_ctx->recv_buf, master->server->rdma_max_chunk_size);
         slave_ctx->recv_buf = NULL;
+        slave_ctx->recv_buf_sz = 0;
     }
     return KVS_OK;
 }
 
-
-kvs_status_t _kvs_repl_wait_rdma_ready_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
-    if(trigger == KVS_EVENT_WRITE_DONE) {
-        return KVS_OK; // wait for read event
-    }
-    if(trigger != KVS_EVENT_RDMA_ESTABLISHED) {
-        LOG_FATAL("invalid trigger for wait rdma ready handler: %d", trigger);
-        assert(0);
+static kvs_status_t _on_rdma_established(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    // 1. 错误处理
+    if(trigger != KVS_EVENT_READ_READY) {
+        LOG_FATAL("invalid trigger: %d", trigger);
         return KVS_ERR;
     }
-    if(conn == NULL) {
-        assert(0);
-        return KVS_ERR;
-    }
-    //struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
-    // if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
-    //     LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
-    //     assert(0);
-    //     return KVS_ERR;
-    // }
-    // if(slave_ctx->rdma_conn != NULL) {
-    //     LOG_FATAL("rdma_conn already set in rdma wait rdma ready handler");
-    //     assert(0);
-    //     return KVS_ERR;
-    // }
-    if(conn->user_data != NULL) {
-        LOG_FATAL("conn user_data already set in rdma wait rdma ready handler");
-        assert(0);
+    if(conn->type != KVS_CONN_RDMA || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
         return KVS_ERR;
     }
 
-    struct kvs_rdma_conn_s *rdma_conn = (struct kvs_rdma_conn_s *)conn;
-    if(rdma_conn->header.type != KVS_CONN_RDMA) {
-        LOG_FATAL("invalid conn type for rdma wait rdma ready handler: %d", rdma_conn->header.type);
-        assert(0);
-        return KVS_ERR;
-    }
-
-
-    // todo: verify token
-    //uint64_t *received_token = (uint64_t*)conn->user_data;//slave_ctx->rdma_token;
-    if(rdma_conn->private_data_len != sizeof(uint64_t)) {
-        LOG_FATAL("invalid private_data_len: %d, expected: %lu", rdma_conn->private_data_len, sizeof(uint64_t));
-        assert(0);
-        return KVS_ERR;
-    }
-    uint64_t *received_token = (uint64_t*)rdma_conn->private_data;
-    LOG_DEBUG("Received token from slave: %zu", *received_token);
-    
-    struct kvs_my_slave_context_s *matched_ctx = kvs_session_match(&master->session_table, *received_token); // remove token from session table
-    if(matched_ctx == NULL) {
-        LOG_FATAL("no matching session for token: %lu", *received_token);
-        assert(0); // todo : close connection
-        return KVS_ERR;
-    }
-    // rdma_conn->header.user_data = matched_ctx;
-    // matched_ctx->rdma_conn = rdma_conn;
-
-    struct kvs_rdma_conn_s *rdma_slave_conn = (struct kvs_rdma_conn_s *)conn;
-    //rdma_slave_conn->header.user_data = matched_ctx;
-    kvs_server_share_conn_type((struct kvs_server_s*)master->server, (struct kvs_conn_header_s*)matched_ctx->tcp_conn, 
-        (struct kvs_conn_header_s*)rdma_slave_conn);
-    if(rdma_slave_conn->header.user_data != matched_ctx) {
-        LOG_FATAL("rdma_slave_conn user_data does not match matched_ctx after sharing conn type");
-        assert(0);
-        return KVS_ERR;
-    }
-    matched_ctx->rdma_conn = rdma_slave_conn;
-
-    // RDMA ready received from slave
-    //LOG_DEBUG("Received RDMA READY from slave fd %d", conn->_internal.fd);
-
-    //kvs_rdma_post_recv(rdma_conn, , size_t off_set, int len, void *user_data)
-    _kvs_repl_begin_wait_slave_recv_ready(master, matched_ctx);
-    matched_ctx->state = KVS_MY_SLAVE_WAIT_RECV_READY;
-    _kvs_master_slave_sync_begin(master);
-    return KVS_OK; // wait for establish RDMA connection
-}
-
-kvs_status_t _kvs_repl_wait_slave_recv_ready_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
-    // not used in rdma replication
-    _kvs_repl_begin_wait_slave_recv_ready(master, (struct kvs_my_slave_context_s*)conn->user_data);
-
-
-    return KVS_OK;
-}
-
-kvs_status_t _kvs_repl_rdma_slave_sending_rdb_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
-    /************rdma发送 *******/
-    if(conn == NULL || conn->user_data == NULL) {
-        assert(0);
-        return KVS_ERR;
-    }
-    if(conn->type != KVS_CONN_RDMA) {
-        LOG_FATAL("invalid conn type for rdma slave sending rdb handler: %d", conn->type);
-        assert(0);
-        return KVS_ERR;
-    }
-    LOG_DEBUG("RDMA slave sending rdb handler called");
+    // 2. 事件完成，处理事件
     struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
         LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
         assert(0);
         return KVS_ERR;
     }
-    size_t *rdb_offset = &slave_ctx->rdb_offset;
 
-    struct kvs_rdma_conn_s *slave_conn = (struct kvs_rdma_conn_s *)conn;
-    //assert(slave_conn->s_idx == 0);
+    _on_rdb_sent_begin(master); // called when starting to send rdb to a slave
+    _kvs_master_alloc_rdma_resources_for_slave(master, slave_ctx);
 
+    //3. 状态转换
+    slave_ctx->state = KVS_MY_SLAVE_WAIT_RDMA_RECV_READY;
 
-    if(trigger == KVS_EVENT_WRITE_DONE) {
-        // RDMA send completed
-        LOG_DEBUG("RDMA send completed for RDB chunk, offset: %zu, size: %d", *rdb_offset, slave_ctx->send_rdb_chunk_size_cur);
-        *rdb_offset += slave_ctx->send_rdb_chunk_size_cur;
+    //4. 注册事件
+    struct kvs_rdma_conn_s *rdma_conn = (struct kvs_rdma_conn_s *)conn;
+    kvs_rdma_post_recv(rdma_conn, slave_ctx->recv_mr, 0, slave_ctx->recv_buf_sz, NULL);
+    LOG_DEBUG("RDMA established from slave idx %d", slave_ctx->slave_idx);
+
+    return KVS_OK;
+}
+
+static kvs_status_t _on_rdma_recv_ready(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    // 1. 错误处理
+    if(trigger != KVS_EVENT_READ_READY) {
+        LOG_FATAL("invalid trigger: %d", trigger);
+        return KVS_ERR;
+    }
+    if(conn->type != KVS_CONN_RDMA || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
+        return KVS_ERR;
     }
 
-    // if(slave_conn->type != KVS_CONN_RDMA) {
-    //     LOG_FATAL("invalid conn type for rdma rdb sending: %d", slave_conn->type);
-    //     assert(0);
-    //     return KVS_ERR;
-    // }
+    // 2. 事件完成，处理事件
+    struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        assert(0);
+        return KVS_ERR;
+    }
 
+    //struct kvs_rdma_conn_s *rdma_conn = (struct kvs_rdma_conn_s *)conn;
+    if(slave_ctx->recv_buf[0] == 'R') {
+        // RDMA RECV READY received from slave
+        LOG_DEBUG("Received RDMA RECV READY from slave idx %d, msg:[%s]", slave_ctx->slave_idx, slave_ctx->recv_buf);
+    } else {
+        LOG_DEBUG("Invalid RDMA RECV READY message from slave idx %d, msg:[%s]", slave_ctx->slave_idx, slave_ctx->recv_buf);
+        assert(0);
+        return KVS_ERR;
+    }
+   
+
+    //3. 状态转换
+    slave_ctx->state = KVS_MY_SLAVE_WAIT_RDB_SENT;
+    LOG_DEBUG("RDMA recv ready from slave idx %d, continuing to send rdb", slave_ctx->slave_idx);
+
+    //4. 注册事件 本次tick延续到下一事件
+    return KVS_STATUS_CONTINUE; // continue to send rdb
+}
+
+
+// rdma_send rdb handler
+static kvs_status_t _on_rdb_sent(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    
+    // 1. 错误处理
+    if(trigger != KVS_EVENT_CONTINUE && trigger != KVS_EVENT_WRITE_DONE) {
+        LOG_FATAL("invalid trigger: %d", trigger);
+        return KVS_ERR;
+    }
+    if(conn->type != KVS_CONN_RDMA || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
+        return KVS_ERR;
+    }
+
+    // 2. 事件完成，处理事件
+ 
+    struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
+    size_t *rdb_offset = &slave_ctx->rdb_offset;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        assert(0);
+        return KVS_ERR;
+    }
+
+    if(trigger == KVS_EVENT_WRITE_DONE) {
+        int sent_size = slave_ctx->sent_size_cur;
+        *rdb_offset += sent_size;
+        LOG_DEBUG("RDMA send completed for slave idx %d, sent size: %d, total sent: %zu/%zu", 
+            slave_ctx->slave_idx, sent_size, *rdb_offset, master->rdb_size);
+    } else if(trigger == KVS_EVENT_CONTINUE) {
+        assert(*rdb_offset == 0);
+        LOG_DEBUG("Starting RDMA send for slave idx %d", slave_ctx->slave_idx);
+    }
+
+
+    slave_ctx->master = master; // todo: set back reference to master ？？ should not be set here
+
+    // 3. 状态转换
+
+    // 4. 注册事件
+    struct kvs_rdma_conn_s *slave_conn = (struct kvs_rdma_conn_s *)conn;
     assert(*rdb_offset <= master->rdb_size);
     if(*rdb_offset == master->rdb_size) {
         // finish sending rdb file
         LOG_DEBUG("finish sending rdb file to slave via RDMA");
-        // rdb file descriptor will be closed when next rdb save
-        // close(conn->server->master.rdb_fd);
-        // conn->server->master.rdb_fd = -1;
+        _on_rdb_sent_end(master); // called when finishing sending rdb to a slave
+        // 3. 状态转换
         slave_ctx->state = KVS_MY_SLAVE_WAIT_RDB_ACK;
-        //*rdb_offset = 0;
-        //assert(slave_conn->s_idx == 0);
-        return KVS_OK; // continue to send backlog via TCP
+        // 4. 注册事件
+        kvs_rdma_post_recv(slave_conn, slave_ctx->recv_mr, 0, slave_ctx->recv_buf_sz, NULL);
+        return KVS_OK;
     } 
-    slave_ctx->master = master; // set back reference to master
+    
     size_t rdb_max_chunk_size = master->server->rdma_max_chunk_size;
     if(master->rdb_size - *rdb_offset > rdb_max_chunk_size) {
-        // send RDMA_MAX_CHUNK_SIZE
+        // 3. 状态转换 (保持不变)
+        // 4. 注册事件
         kvs_rdma_post_send(slave_conn, master->rdb_mr, 0, *rdb_offset, rdb_max_chunk_size, NULL);
         LOG_DEBUG("Posted RDMA send for RDB chunk, offset: %zu, size: %d", *rdb_offset, rdb_max_chunk_size);
-        //*rdb_offset += rdb_max_chunk_size;
-    } else {
-        // send remaining
-        // imm_data = -1 indicates last chunk
-        //getchar();
-        kvs_rdma_post_send(slave_conn, master->rdb_mr, -1, *rdb_offset, master->rdb_size - *rdb_offset, NULL);
-        LOG_DEBUG("Posted RDMA send for RDB chunk, offset: %zu, size: %zu", *rdb_offset, master->rdb_size - *rdb_offset);
-        //*rdb_offset = master->rdb_size;
-        return KVS_OK; 
+    } else{
+        // 3. 状态转换 (保持不变)
+        // 4. 注册事件
+        kvs_rdma_post_send(slave_conn, master->rdb_mr, -1, // imm_data = -1 indicates last chunk
+            *rdb_offset, master->rdb_size - *rdb_offset, NULL);
+        LOG_DEBUG("Posted RDMA send for RDB chunk, offset: %zu, size: %zu, imm_data: -1", *rdb_offset, master->rdb_size - *rdb_offset);
     }
-    //kvs_net_rdma_post_send(slave_conn, master->rdb_mr, *rdb_offset, master->rdb_size - *rdb_offset);
     return KVS_OK; // wait for RDMA send completion
 }
 
-kvs_status_t _kvs_repl_wait_rdb_ack_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
-    // not used in rdma replication
-    
-    struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
-    struct kvs_conn_s *tcp_conn = slave_ctx->tcp_conn;
-    assert(tcp_conn->s_idx == 0);
-    kvs_master_slave_state_machine_tick(master, (struct kvs_conn_header_s *)tcp_conn, KVS_EVENT_WRITE_DONE);
-    return KVS_OK;
-}
-
-
-kvs_status_t _kvs_repl_slave_sending_backlog_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
-    if(conn == NULL || conn->user_data == NULL) {
-        assert(0);
+kvs_status_t _on_rdb_ack(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    // 1. 错误处理
+    if(trigger != KVS_EVENT_READ_READY) {
+        LOG_FATAL("invalid trigger: %d", trigger);
         return KVS_ERR;
     }
-    if(conn->type != KVS_CONN_TCP) {
-        LOG_FATAL("invalid conn type for slave sending backlog handler: %d", conn->type);
-        assert(0);
+    if(conn->type != KVS_CONN_RDMA || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
         return KVS_ERR;
     }
-    struct kvs_conn_s *slave_conn = (struct kvs_conn_s *)conn;
+
+    // 2. 事件完成，处理事件
     struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
         LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
-        assert(0);
         return KVS_ERR;
     }
-    if(master->repl_backlog_idx == 0) {
-        // no backlog to send
-        LOG_DEBUG("no backlog to send to slave");
-        slave_ctx->state = KVS_MY_SLAVE_ONLINE;
-        _kvs_master_slave_sync_end(master);
-        kvs_master_add_slave(master, slave_conn);
-        assert(slave_conn->s_idx == 0);
-        return KVS_STATUS_CONTINUE; // done
+
+    if(slave_ctx->recv_buf[0] == 'A') {
+        // RDB ACK received from slave
+        LOG_DEBUG("Received RDB ACK from slave idx %d, msg:[%s]", slave_ctx->slave_idx, slave_ctx->recv_buf);
+    } else {
+        LOG_FATAL("Invalid RDB ACK message from slave idx %d, msg:[%s]", slave_ctx->slave_idx, slave_ctx->recv_buf);
+        return KVS_ERR;
     }
+
+
+    //3. 状态转换
+    slave_ctx->state = KVS_MY_SLAVE_WAIT_SLAVE_LOAD_ACK;
+
+    LOG_DEBUG("RDB ACK from slave idx %d, continuing to send backlog", slave_ctx->slave_idx);
+    //4. 注册事件 本次tick延续到下一事件
+    struct kvs_conn_s *tcp_conn = (struct kvs_conn_s *)slave_ctx->header.conn;
+    kvs_net_set_recv_event(tcp_conn);
+
+    return KVS_OK; // continue to send backlog
+}
+
+kvs_status_t _on_slave_rdb_loaded_ack(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    // 1. 错误处理
+    if(trigger != KVS_EVENT_READ_READY) {
+        LOG_FATAL("invalid trigger: %d", trigger);
+        return KVS_ERR;
+    }
+    if(conn->type != KVS_CONN_TCP || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
+        return KVS_ERR;
+    }
+
+    // 2. 事件完成，处理事件
+    struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        return KVS_ERR;
+    }
+
+    struct kvs_conn_s *slave_conn = (struct kvs_conn_s *)conn;
+    if(strncmp(slave_conn->r_buffer, "+RDBLOADED\r\n", sizeof("+RDBLOADED\r\n") - 1) != 0) {
+        LOG_FATAL("Invalid RDB LOADED ACK message from slave idx %d, msg:[%s]", slave_ctx->slave_idx, slave_conn->r_buffer);
+        return KVS_ERR;
+    }
+    slave_ctx->processed_sz_cur = sizeof("+RDBLOADED\r\n") - 1;
+    LOG_DEBUG("Received RDB LOADED ACK from slave idx %d, msg:[%s]", slave_ctx->slave_idx, slave_conn->r_buffer);
+
+    _kvs_master_free_rdma_resources_for_slave(master, slave_ctx);
+    // rdb事件已经结束，关闭RDMA连接
+    if(slave_ctx->rdma_conn) {
+        LOG_DEBUG("Closing RDMA sync channel for Slave %d", slave_ctx->slave_idx);
+        rdma_disconnect(slave_ctx->rdma_conn->cm_id);
+    }
+
+    //3. 状态转换
+    slave_ctx->state = KVS_MY_SLAVE_WAIT_BACKLOG_SENT;
+
+    LOG_DEBUG("Slave idx %d loaded RDB, continuing to send backlog", slave_ctx->slave_idx);
+    //4. 注册事件 本次tick延续到下一事件
+     
+    return KVS_STATUS_CONTINUE; // continue to send backlog
+}
+
+
+kvs_status_t _on_backlog_sent(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    // 1. 错误处理
+    if(trigger != KVS_EVENT_WRITE_DONE && trigger != KVS_EVENT_CONTINUE) {
+        LOG_FATAL("invalid trigger: %d", trigger);
+        return KVS_ERR;
+    }
+    if(conn->type != KVS_CONN_TCP || conn->user_data == NULL || master == NULL) {
+        LOG_FATAL("invalid conn type: %d or conn user_data == NULL is %d or master == NULL is %d", conn->type, conn->user_data == NULL, master == NULL);
+        return KVS_ERR;
+    }
+
+    // 2. 事件完成，处理事件
+    struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
+    if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
+        LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
+        return KVS_ERR;
+    }
+
+    struct kvs_conn_s *tcp_conn = (struct kvs_conn_s *)slave_ctx->header.conn;
+    if(tcp_conn == NULL) {
+        LOG_FATAL("tcp_conn is NULL in backlog sent handler for slave idx %d", slave_ctx->slave_idx);
+        return KVS_ERR;
+    }
+
+    if(trigger == KVS_EVENT_WRITE_DONE) {
+        //int sent_size = tcp_conn->s_idx;
+        int sent_size = slave_ctx->sent_size_cur;
+        slave_ctx->repl_backlog_offset += sent_size;
+        LOG_DEBUG("Backlog send completed for slave idx %d, sent size: %d, total sent: %zu/%zu", 
+            slave_ctx->slave_idx, sent_size, slave_ctx->repl_backlog_offset, master->repl_backlog_idx);
+        tcp_conn->s_idx = 0; // reset send index
+    } else if(trigger == KVS_EVENT_CONTINUE) {
+        assert(slave_ctx->repl_backlog_offset == 0);
+        LOG_DEBUG("Starting backlog send for slave idx %d", slave_ctx->slave_idx);
+    }
+    
     size_t *repl_backlog_offset = &slave_ctx->repl_backlog_offset;
-    assert(slave_conn->s_idx == 0);
+    assert(tcp_conn->s_idx == 0);
     int to_send = master->repl_backlog_idx - *repl_backlog_offset;
     
-    if(to_send > slave_conn->s_buf_sz) {
-        to_send = slave_conn->s_buf_sz;
+    if(to_send > tcp_conn->s_buf_sz) {
+        to_send = tcp_conn->s_buf_sz;
     }
     
     if(to_send == 0) {
         // finish sending backlog
         LOG_DEBUG("finish sending backlog to slave");
+        _kvs_master_stop_repl_buf_saving(master); // stop saving backlog if all slaves are online
+        kvs_master_add_slave(master, tcp_conn);
+
+        // 3. 状态转换
         slave_ctx->state = KVS_MY_SLAVE_ONLINE;
-        _kvs_master_slave_sync_end(master);
-        kvs_master_add_slave(master, slave_conn);
+
+       
         *repl_backlog_offset = 0;
-        assert(slave_conn->s_idx == 0);
-        return KVS_STATUS_CONTINUE; // done
+        assert(tcp_conn->s_idx == 0);
+        // 4. 注册事件 recv接收客户端命令
+        kvs_net_set_recv_event(tcp_conn); 
+        return KVS_OK; // done
     } else {
-        memcpy(slave_conn->s_buffer, master->repl_backlog + *repl_backlog_offset, to_send);
+        memcpy(tcp_conn->s_buffer, master->repl_backlog + *repl_backlog_offset, to_send);
         *repl_backlog_offset += to_send;
-        slave_conn->s_idx = to_send;
-        kvs_net_set_send_event_manual(slave_conn);
+        tcp_conn->s_idx = to_send;
+        // 3. 状态转换 (保持不变)
+        // 4. 注册事件
+        kvs_net_set_send_event_manual(tcp_conn);
+        return KVS_OK;
     }
-    return KVS_OK;
 }
 
-kvs_status_t kvs_repl_slave_online_handler(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+kvs_status_t _on_slave_online(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
     if(conn == NULL || conn->user_data == NULL) {
         assert(0);
         return KVS_ERR;
     }
+    if(trigger == KVS_EVENT_WRITE_DONE) {
+        // replication write done event in online state, ignore
+        return KVS_OK; 
+    }
+    //LOG_FATAL("Slave is now ONLINE, but should not trigger any event for now");
     struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
         LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
@@ -639,6 +832,9 @@ kvs_status_t kvs_repl_slave_online_handler(struct kvs_master_s *master, struct k
         return KVS_ERR;
     }
     struct kvs_conn_s *slave_conn = (struct kvs_conn_s *)conn;
+    //LOG_DEBUG("Slave idx %d is now ONLINE", slave_ctx->slave_idx);
+
+    //getchar(); // debug pause
     assert(slave_conn->s_idx == 0);
 
 
@@ -650,26 +846,56 @@ kvs_status_t kvs_repl_slave_online_handler(struct kvs_master_s *master, struct k
 
 typedef kvs_status_t (*slave_state_handler_t)(struct kvs_master_s *master, struct kvs_conn_header_s *slave_conn, kvs_event_trigger_t trigger);
 
+
+// typedef enum {
+//     KVS_MY_SLAVE_NONE = 0,
+//     KVS_MY_SLAVE_WAIT_BGSAVE_END, // 等待后台 RDB 进程结束
+//     KVS_MY_SLAVE_WAIT_SENT_RDMA_INFO, // 等待发送 RDMA 连接信息
+//     KVS_MY_SLAVE_WAIT_RDMA_CONNECT_REQUEST, // 等待 Slave 发起 RDMA 连接请求
+//     KVS_MY_SLAVE_WAIT_RDMA_ESTABLISHED, // 等待 RDMA 连接建立完成
+//     KVS_MY_SLAVE_WAIT_RDMA_RECV_READY, // 等待 Slave 准备好接收 RDB
+//     KVS_MY_SLAVE_WAIT_RDB_SENT,     // 正在发送 RDB 文件流
+//     KVS_MY_SLAVE_WAIT_RDB_ACK,    // 等待 Slave RDB 接收完成确认
+//     KVS_MY_SLAVE_WAIT_BACKLOG_SENT, // 正在发送 Backlog 积压数据
+//     KVS_MY_SLAVE_ONLINE,           // 实时同步状态
+//     KVS_MY_SLAVE_OFFLINE,          // 离线状态
+//     KVS_MY_SLAVE_STATE_NUM
+// } kvs_my_slave_state_t;
+
 slave_state_handler_t slave_state_handlers[] = {
-    [KVS_MY_SLAVE_NONE] = _kvs_repl_slave_none_handler,
-    [KVS_MY_SLAVE_WAIT_BGSAVE_END] =  _kvs_repl_rdma_slave_wait_bgsave_end_handler, //_kvs_repl_slave_wait_bgsave_end_handler,
-    [KVS_MY_SLAVE_WAIT_RDMA_READY] = _kvs_repl_wait_rdma_ready_handler,
-    [KVS_MY_SLAVE_WAIT_RECV_READY] = _kvs_repl_wait_slave_recv_ready_handler,
-    [KVS_MY_SLAVE_SENDING_RDB] = _kvs_repl_rdma_slave_sending_rdb_handler, // _kvs_repl_slave_sending_rdb_handler,
-    [KVS_MY_SLAVE_WAIT_RDB_ACK] = _kvs_repl_wait_rdb_ack_handler,
-    [KVS_MY_SLAVE_SENDING_BACKLOG] = _kvs_repl_slave_sending_backlog_handler,
-    [KVS_MY_SLAVE_ONLINE] = kvs_repl_slave_online_handler,
+    [KVS_MY_SLAVE_NONE] = _on_slave_none,
+    [KVS_MY_SLAVE_WAIT_BGSAVE_END] =  _on_bgsave_end, //_kvs_repl_slave_wait_bgsave_end_handler,
+    [KVS_MY_SLAVE_WAIT_SENT_RDMA_INFO] = _on_rdma_info_sent,
+    [KVS_MY_SLAVE_WAIT_RDMA_CONNECT_REQUEST] = _on_rdma_connect_request,
+    [KVS_MY_SLAVE_WAIT_RDMA_ESTABLISHED] = _on_rdma_established,
+    [KVS_MY_SLAVE_WAIT_RDMA_RECV_READY] = _on_rdma_recv_ready,
+    [KVS_MY_SLAVE_WAIT_RDB_SENT] = _on_rdb_sent, // _kvs_repl_slave_sending_rdb_handler,
+    [KVS_MY_SLAVE_WAIT_RDB_ACK] = _on_rdb_ack,
+    [KVS_MY_SLAVE_WAIT_SLAVE_LOAD_ACK] = _on_slave_rdb_loaded_ack,
+    [KVS_MY_SLAVE_WAIT_BACKLOG_SENT] = _on_backlog_sent,
+    [KVS_MY_SLAVE_ONLINE] = _on_slave_online,
     [KVS_MY_SLAVE_OFFLINE] = NULL
 };
 
-kvs_status_t kvs_master_slave_state_machine_tick(struct kvs_master_s *master, struct kvs_conn_header_s *slave_conn, kvs_event_trigger_t trigger) {
-    if(master == NULL || slave_conn == NULL) return KVS_ERR;
-    struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)slave_conn->user_data;
-    if(slave_ctx == NULL && trigger != KVS_EVENT_RDMA_ESTABLISHED) {
-        LOG_FATAL("slave_ctx is NULL");
-        assert(0);
-        return KVS_ERR;
-    }
+/*
+* WAIT_BGSAVE, ON_BGSAVE_END
+* WAIT_RDMA_CONNECT_REQUEST ,ON_RDMA_CONNECT_REQUEST
+* WAIT_RDMA_ESTABLISHED, ON_RDMA_ESTABLISHED
+* WAIT_RDMA_RECV_SLAVE_READY, ON_RDMA_RECV_SLAVE_READY
+* WAIT_RDMA_SEND, ON_RDB_SEND_DONE
+* WAIT_RDMA_RDB_ACK, ON_RDMA_RDB_ACK
+* WAIT_BACKLOG_SEND, ON_BACKLOG_SEND_DONE
+* ONLINE, OFFLINE
+*/
+
+kvs_status_t kvs_master_slave_state_machine_tick(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+    if(master == NULL || conn == NULL) return KVS_ERR;
+    struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->user_data;
+    // if(slave_ctx == NULL && trigger != KVS_EVENT_RDMA_ESTABLISHED) {
+    //     LOG_FATAL("slave_ctx is NULL");
+    //     assert(0);
+    //     return KVS_ERR;
+    // }
     // if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
     //     LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
     //     assert(0);
@@ -678,22 +904,19 @@ kvs_status_t kvs_master_slave_state_machine_tick(struct kvs_master_s *master, st
 
     kvs_status_t ret = KVS_STATUS_CONTINUE;
 
-    if(trigger == KVS_EVENT_RDMA_ESTABLISHED && slave_ctx == NULL) {
+    if(trigger == KVS_EVENT_CONNECTED) {
         // special case for RDMA connection establishment
-        ret = slave_state_handlers[KVS_MY_SLAVE_WAIT_RDMA_READY](master, slave_conn, trigger);
-        if(ret != KVS_STATUS_CONTINUE) {
-            return ret;
-        }
-        // get the slave_ctx after RDMA established
-        slave_ctx = (struct kvs_my_slave_context_s*)slave_conn->user_data;
-        if(slave_ctx == NULL) {
-            LOG_FATAL("slave_ctx is NULL after RDMA established");
+        if(conn->type == KVS_CONN_RDMA) {
+            return slave_state_handlers[KVS_MY_SLAVE_WAIT_RDMA_CONNECT_REQUEST](master, conn, trigger);
+        } else {
+            LOG_FATAL("invalid conn type for CONNECTED event: %d", conn->type);
             assert(0);
             return KVS_ERR;
         }
     }
 
     while(ret == KVS_STATUS_CONTINUE) {
+        assert(slave_ctx != NULL );
         LOG_DEBUG("slave state machine tick: state=%d, trigger=%d", slave_ctx->state, trigger);
         kvs_my_slave_state_t state = slave_ctx->state;
         if(state < KVS_MY_SLAVE_NONE || state >= KVS_MY_SLAVE_STATE_NUM) {
@@ -710,7 +933,7 @@ kvs_status_t kvs_master_slave_state_machine_tick(struct kvs_master_s *master, st
         }
         
     
-        ret = handler(master, slave_conn, trigger); // ignore return value for now
+        ret = handler(master, conn, trigger); // ignore return value for now
         if(ret == KVS_ERR) {
             // 状态回退
             LOG_FATAL("slave state handler for state %d failed", state);
@@ -719,8 +942,15 @@ kvs_status_t kvs_master_slave_state_machine_tick(struct kvs_master_s *master, st
         } else if(ret == KVS_QUIT) {
             // 断开连接
             LOG_INFO("slave state handler for state %d requested to quit", state);
-            assert(0);
-            return KVS_QUIT;
+            return -1; // indicate to quit connection
+        } else if(ret == KVS_STATUS_CONTINUE) {
+            // 继续下一个状态处理
+            LOG_DEBUG("slave state handler for state %d returned CONTINUE", state);
+            trigger = KVS_EVENT_CONTINUE; // set trigger to CONTINUE for next state
+        } else {
+            // 正常返回
+            //LOG_DEBUG("slave state handler for state %d completed", state);
+            return KVS_OK;
         }
     };
    
@@ -844,7 +1074,10 @@ kvs_status_t kvs_master_propagate_command_to_slaves(struct kvs_master_s *master,
 kvs_status_t kvs_my_slave_on_recv(struct kvs_conn_s *conn, int *read_size) {
     // currently no need to handle anything from slave
     //assert(0); // should not receive anything from slave
-    kvs_master_slave_state_machine_tick(conn->server_ctx->master, conn, KVS_EVENT_READ_READY);
+    kvs_master_slave_state_machine_tick(conn->server_ctx->master, (struct kvs_conn_header_s *)conn, KVS_EVENT_READ_READY);
+    struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
+
+    *read_size = slave_ctx->processed_sz_cur;
     return KVS_OK;
 }
 
@@ -864,19 +1097,22 @@ void kvs_my_slave_on_close(struct kvs_conn_s *conn) {
     }
     if(conn->header.user_data == NULL) {
         LOG_FATAL("conn user_data is NULL");
-        assert(0);
         return;
     }
     struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
     if(slave_ctx->header.type != KVS_CTX_SLAVE_OF_ME) {
         LOG_FATAL("invalid ctx type: %d", slave_ctx->header.type);
-        assert(0);
         return;
+    }
+
+    if(slave_ctx->state == KVS_MY_SLAVE_ONLINE) {
+        // remove from online list
+        kvs_master_remove_slave(master, conn);
     }
 
     if(slave_ctx->state != KVS_MY_SLAVE_OFFLINE) {
         slave_ctx->state = KVS_MY_SLAVE_OFFLINE;
-        kvs_master_remove_slave(master, conn);
+    //  assert(0); // todo: handle offline state
     } else {
         LOG_WARN("Slave fd %d already offline", conn->_internal.fd);
     }
@@ -885,22 +1121,28 @@ void kvs_my_slave_on_close(struct kvs_conn_s *conn) {
 }
 
 
-kvs_status_t kvs_my_slave_on_rdma_send(struct kvs_rdma_conn_s *conn,   size_t send_off_set, int send_len) {
+kvs_status_t kvs_my_slave_on_rdma_send(struct kvs_rdma_conn_s *conn, size_t send_off_set, int send_len) {
 
     struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
     if(slave_ctx == NULL) {
         LOG_FATAL("slave_ctx is NULL in rdma send completion");
         return KVS_ERR;
     }
-    if(slave_ctx->master == NULL) {
-        LOG_FATAL("slave_ctx->master is NULL in rdma send completion");
-        return KVS_ERR;
-    }
     
-    slave_ctx->send_rdb_chunk_size_cur = send_len;
+    slave_ctx->sent_size_cur = send_len;
     return kvs_master_slave_state_machine_tick(slave_ctx->master, (struct kvs_conn_header_s *)conn, KVS_EVENT_WRITE_DONE);
 }
 
-kvs_status_t kvs_my_slave_on_rdma_recv(struct kvs_rdma_conn_s *conn) {
-    assert(0); // should not receive anything from slave via RDMA
+kvs_status_t kvs_my_slave_on_rdma_recv(struct kvs_rdma_conn_s *conn, size_t recv_off_set, int recv_len, int imm_data) {
+
+    struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
+    if(slave_ctx == NULL) {
+        LOG_FATAL("slave_ctx is NULL in rdma recv completion");
+        return KVS_ERR;
+    }
+
+    slave_ctx->recv_size_cur = recv_len;
+    slave_ctx->buf_offset_cur = recv_off_set;
+    slave_ctx->imm_data_cur = imm_data;
+    return kvs_master_slave_state_machine_tick(slave_ctx->master, (struct kvs_conn_header_s *)conn, KVS_EVENT_READ_READY);
 }

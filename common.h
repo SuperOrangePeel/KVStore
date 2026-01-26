@@ -35,4 +35,6 @@ struct kvs_session_table_s {
 uint64_t kvs_session_register(struct kvs_session_table_s *table, void *session_ctx);
 void *kvs_session_match(struct kvs_session_table_s *table, uint64_t token);
 
+
+void mem_hexdump(const void *addr, size_t len, const char *title);
 #endif

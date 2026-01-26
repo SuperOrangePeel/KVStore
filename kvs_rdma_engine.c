@@ -80,7 +80,7 @@ kvs_status_t kvs_rdma_post_listen(struct kvs_rdma_engine_s *rdma) {
 }
 
 
-kvs_status_t kvs_rdma_post_connect(struct kvs_rdma_engine_s *rdma,  const char *server_ip, int server_port, const void *priv_data, uint8_t priv_len, void* user_data) {
+kvs_status_t kvs_rdma_post_connect(struct kvs_rdma_engine_s *rdma,  const char *server_ip, int server_port, const void *priv_data, uint8_t priv_len, struct kvs_rdma_conn_s** new_rdma_conn) {
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -102,10 +102,11 @@ kvs_status_t kvs_rdma_post_connect(struct kvs_rdma_engine_s *rdma,  const char *
     conn->private_data = priv_data;
     conn->private_data_len = priv_len;
     conn->cm_id = conn_id;
-    conn->header.user_data = user_data;
+    //conn->header.user_data = user_data;
 
     conn_id->context = (void *)conn;
 
+    *new_rdma_conn = conn;
     return KVS_OK;
 }
 
@@ -124,14 +125,13 @@ int _kvs_rdma_init_conn(struct kvs_rdma_conn_s *conn) {
         },
         .qp_type = IBV_QPT_RC,
     };
-    struct ibv_qp_attr qp_attr_modify = {
-        .rnr_retry = 7, // infinite retry
-    };
 
 
-    if (0 != rdma_create_qp(id, rdma->pd, &qp_attr)) {
-        perror("rdma_create_qp failed\n");
-        assert(0);
+
+    int ret = rdma_create_qp(id, rdma->pd, &qp_attr);
+    if (0 != ret) {
+        perror("rdma_create_qp failed");
+        LOG_FATAL("rdma_create_qp failed: %s (code: %d)\n", strerror(-ret), ret);
         return -1;
     }
     id->pd = rdma->pd;
@@ -193,17 +193,6 @@ int _kvs_rdma_on_disconnected(struct rdma_cm_id *id) {
     return 0;
 }
 
-int _kvs_engine_on_error(struct rdma_cm_id *id, int event_type, int err) {
-    LOG_ERROR("RDMA error on event %d: %s (code: %d)\n", event_type, strerror(-err), err);
-
-    rdma_destroy_id(id);
-
-    _kvs_rdma_deinit_conn((struct kvs_rdma_conn_s *)id->context);
-    _kvs_rdma_destroy_conn((struct kvs_rdma_conn_s *)id->context);    
-
-    return 0;
-}
-
 static int _kvs_rdma_create_global_resources(struct kvs_rdma_engine_s *rdma, struct ibv_context *verbs);
 
 
@@ -241,6 +230,12 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
             // server listen id context is kvs_rdma_engine_s
             // rdma = (struct kvs_rdma_engine_s *)event->listen_id->context;
         }
+        bool need_destroy = (type == RDMA_CM_EVENT_DISCONNECTED 
+            || type == RDMA_CM_EVENT_ADDR_ERROR 
+            || type == RDMA_CM_EVENT_ROUTE_ERROR 
+            || type == RDMA_CM_EVENT_CONNECT_ERROR 
+            || type == RDMA_CM_EVENT_UNREACHABLE 
+            || type == RDMA_CM_EVENT_REJECTED);
         switch(type) {
             case RDMA_CM_EVENT_ADDR_RESOLVED:
                 _kvs_rdma_create_global_resources(rdma, event->id->verbs);
@@ -296,7 +291,7 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
                         conn_param.retry_count = 7;         // 网络丢包重试次数 (7 表示无限重试)
                         //conn_param.rnr_retry = 7;           // 【关键】对端没铺坑时的重试次数 (7 表示无限重试)
                         conn_param.rnr_retry_count = 7;
-                        if (0 != rdma_accept(id, &conn_param)) {
+                        if (0 != rdma_accept(conn->cm_id, &conn_param)) {
                             perror("rdma_accept failed\n");
                             exit(-1);
                         }
@@ -322,8 +317,8 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
                 if(rdma->callbacks.on_disconnected) {
                     rdma->callbacks.on_disconnected(conn);
                 }
-                _kvs_rdma_deinit_conn(conn);
-                _kvs_rdma_destroy_conn(conn);
+                // _kvs_rdma_deinit_conn(conn);
+                // _kvs_rdma_destroy_conn(conn);
                 LOG_DEBUG("Connection disconnected.");
                 break;
             default:
@@ -336,40 +331,20 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
                     if (rdma->callbacks.on_error) {
                         rdma->callbacks.on_error(conn, type, event->status);
                     }
-                    _kvs_rdma_deinit_conn(conn);
-                    _kvs_rdma_destroy_conn(conn);
+                    // _kvs_rdma_deinit_conn(conn);
+                    // _kvs_rdma_destroy_conn(conn);
                     //rdma->callbacks.on_error(conn, type, event->status);
                     //_kvs_rdma_on_error(conn->cm_id);
                     
                 }
                 break;
         }
-#if 0
-        if(event->event == RDMA_CM_EVENT_CONNECT_REQUEST) {
-            if(event->id == NULL) {
-                LOG_ERROR("rdma_cm_event CONNECT_REQUEST with NULL id");
-                rdma_ack_cm_event(event);
-                assert(0);   
-                continue;
-            }
-            
-            rdma->callbacks.on_connect_request(event->id, event->param.conn.private_data, event->param.conn.private_data_len, rdma->global_ctx);
-
-            // _on_connection_request(event->id, event->param.conn.private_data, rdma);
-            LOG_DEBUG("Received connection request.");
-        } else if(event->event == RDMA_CM_EVENT_ESTABLISHED) {
-            // Handle established connection
-            
-            rdma->callbacks.on_established(event->id, rdma->global_ctx);
-            LOG_DEBUG("Connection established.\n");
-        } else if(event->event == RDMA_CM_EVENT_DISCONNECTED) {
-            // Handle disconnection
-            rdma->callbacks.on_disconnected(event->id, rdma->global_ctx);
-            LOG_DEBUG("Connection disconnected.\n");
-        }
-#endif
 
         rdma_ack_cm_event(event);
+
+        if(need_destroy) {
+            _kvs_rdma_on_disconnected(id);
+        }
     }
 
     kvs_loop_add_poll_in(rdma->loop, &rdma->cm_event);
@@ -434,7 +409,7 @@ void _rdma_wc_handler(void *ctx, int res, int flags){
                     if(rdma->callbacks.on_comp_recv) {
                         rdma->callbacks.on_comp_recv(conn, off_set, cur_wc->byte_len, cur_wc->imm_data, user_data);
                     }
-                    LOG_DEBUG("Receive completed for wr_id: %lu\n", cur_wc->wr_id);
+                    //LOG_DEBUG("Receive completed for wr_id: %lu, imm_data: %u\n", cur_wc->wr_id, cur_wc->imm_data);
                 } else if (cur_wc->opcode == IBV_WC_SEND) {
                     // Handle send completion
                     if(rdma->callbacks.on_comp_send) {
@@ -595,6 +570,11 @@ struct kvs_rdma_mr_s *kvs_rdma_register_memory(struct kvs_rdma_engine_s *rdma, v
     struct kvs_rdma_mr_s *mr = (struct kvs_rdma_mr_s *)kvs_malloc(sizeof(struct kvs_rdma_mr_s));
     mr->addr = addr;
     mr->length = length;
+    if(rdma->pd == NULL) {
+        LOG_FATAL("kvs_rdma_register_memory: rdma pd is NULL");
+        kvs_free(mr, sizeof(struct kvs_rdma_mr_s));
+        return NULL;
+    }
     mr->mr = ibv_reg_mr(rdma->pd, addr, length, flags);
     if (!mr->mr) {
         perror("ibv_reg_mr failed");

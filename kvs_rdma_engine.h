@@ -125,7 +125,7 @@ int kvs_rdma_deregister_memory(struct kvs_rdma_mr_s *mr);
 
 
 kvs_status_t kvs_rdma_post_listen(struct kvs_rdma_engine_s *rdma);
-kvs_status_t kvs_rdma_post_connect(struct kvs_rdma_engine_s *rdma,  const char *server_ip, int server_port, const void *priv_data, uint8_t priv_len, void* user_data);
+kvs_status_t kvs_rdma_post_connect(struct kvs_rdma_engine_s *rdma,  const char *server_ip, int server_port, const void *priv_data, uint8_t priv_len, struct kvs_rdma_conn_s **new_rdma_conn);
 
 // kvs_status_t kvs_rdma_post_send(struct ibv_qp *qp, struct ibv_mr *mr, size_t off_set, int len, uint64_t wr_id);
 // kvs_status_t kvs_rdma_post_recv(struct ibv_qp *qp, struct ibv_mr *mr, size_t off_set, int len, uint64_t wr_id);
