@@ -29,6 +29,11 @@ struct kvs_rdma_conn_s {
     struct kvs_conn_header_s header;
     //void *user_data;
     struct rdma_cm_id *cm_id;
+    struct ibv_qp *qp;
+    struct ibv_pd *pd;
+    struct ibv_cq *cq;
+    struct ibv_comp_channel *comp_channel;
+    struct kvs_event_s wc_event; // 完成队列事件
 
     struct kvs_rdma_engine_s *rdma_engine;
     //struct rdma_cm_id *cm_id;
@@ -73,6 +78,7 @@ struct kvs_rdma_config_s {
     int max_recv_wr;
     int max_send_wr;
     int max_sge;
+    int max_inline_data;
 
     void *global_ctx;
     struct kvs_rdma_cbs_s callbacks;
@@ -90,12 +96,12 @@ struct kvs_rdma_engine_s {
 	// uint8_t private_data_len;
 
     struct rdma_cm_id *rdma_listen_id; // only for server listen
-    struct ibv_comp_channel *comp_channel;
-    struct ibv_pd *pd; //唯一的保护域
-    struct ibv_cq *cq; //完成队列
+    //struct ibv_comp_channel *comp_channel;
+    //struct ibv_pd *pd; //唯一的保护域
+    //struct ibv_cq *cq; //完成队列
     int cq_size;
     struct kvs_event_s cm_event; // cm 事件
-    struct kvs_event_s wc_event; // 完成队列事件
+   
 
     void *global_ctx;
 
@@ -103,6 +109,7 @@ struct kvs_rdma_engine_s {
     int max_recv_wr;
     int max_send_wr;
     int max_sge;
+    int max_inline_data;
 
     struct kvs_rdma_cbs_s callbacks;
 };
@@ -117,7 +124,8 @@ struct kvs_rdma_cq_ctx_s {
 
 int kvs_rdma_init_engine(struct kvs_rdma_engine_s *rdma, struct kvs_loop_s *loop, struct kvs_rdma_config_s *config) ;
 int kvs_rdma_deinit_engine(struct kvs_rdma_engine_s *rdma);
-struct kvs_rdma_mr_s *kvs_rdma_register_memory(struct kvs_rdma_engine_s *rdma, void *addr, size_t length, int flags);
+//struct kvs_rdma_mr_s *kvs_rdma_register_memory(struct kvs_rdma_engine_s *rdma, void *addr, size_t length, int flags);
+struct kvs_rdma_mr_s *kvs_rdma_register_memory_on_conn(struct kvs_rdma_conn_s *conn, void *addr, size_t length, int flags);
 int kvs_rdma_deregister_memory(struct kvs_rdma_mr_s *mr);
 
 // struct ibv_mr *kvs_rdma_register_memory(struct kvs_rdma_engine_s *rdma, void *addr, size_t length, int flags);
@@ -131,6 +139,7 @@ kvs_status_t kvs_rdma_post_connect(struct kvs_rdma_engine_s *rdma,  const char *
 // kvs_status_t kvs_rdma_post_recv(struct ibv_qp *qp, struct ibv_mr *mr, size_t off_set, int len, uint64_t wr_id);
 
 kvs_status_t kvs_rdma_post_send(struct kvs_rdma_conn_s *conn,struct kvs_rdma_mr_s *mr, int imm_data, size_t off_set, int len, void* user_data);
+kvs_status_t kvs_rdma_post_send_inline(struct kvs_rdma_conn_s *conn, struct kvs_rdma_mr_s *mr, int imm_data, size_t off_set, int len, void* user_data);
 kvs_status_t kvs_rdma_post_recv(struct kvs_rdma_conn_s *conn, struct kvs_rdma_mr_s *mr, size_t off_set, int len, void *user_data);
 
 #endif 

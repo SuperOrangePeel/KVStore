@@ -46,6 +46,7 @@ int main(int argc, char *argv[]) {
         .max_recv_wr = 128,
         .max_send_wr = 128,
         .max_sge = 1,
+        .max_inline_data = 64, // 操作系统可以直接把小于等于64字节的数据内联到WR中发送出去，不用额外进行DMA操作
         .global_ctx = (void*)&global_server,
         //.callbacks.on_connect_before = kvs_handler_on_rdma_connect_before,
         .callbacks.on_connect_request = kvs_handler_on_rdma_connect_request,
@@ -84,7 +85,9 @@ int main(int argc, char *argv[]) {
 
     kvs_net_init(&global_server.network, &net_conf);
     //kvs_proactor_init(&proactor, &proactor_options);
-    size_t rdma_max_chunk_size = 1024; // 1kb
+    size_t rdma_max_chunk_size = 1024 ; // 60KB
+    int rdma_reponse_buf_size = 512; // 512B
+    size_t rdma_recv_buf_count = 4; // 4 buffers for receiving RDB data
 
 	if(argc == 2) {
         rdma_conf.server_port = 2001;
@@ -96,6 +99,8 @@ int main(int argc, char *argv[]) {
 
             .master_config.max_slave_count = KVS_SERVER_MAX_SLAVES_DEFAULT,
             .master_config.repl_backlog_size = 1024 * 1024, // 1MB
+            .master_config.rdma_recv_buffer_count = rdma_recv_buf_count * 2, // double buffers for each slave, 防止有除了有回复rdb传输的ack，还有其他数据导致RNR
+            .master_config.rdma_recv_buf_size = rdma_reponse_buf_size,
             .pers_config.aof_enabled = 1,
             .pers_config.aof_filename = "kvstore.aof",
             .pers_config.rdb_filename = "dump.rdb",
@@ -126,7 +131,9 @@ int main(int argc, char *argv[]) {
             //.io_uring_entries = 1024,
             .slave_config.master_ip = master_ip,
             .slave_config.master_port = master_port,
-            .slave_config.rdb_recv_buffer_count = 4,
+            .slave_config.rdb_recv_buffer_count = rdma_recv_buf_count,
+            .slave_config.rdma_send_buf_size = rdma_reponse_buf_size,
+
             .pers_config.aof_enabled = 0,
             .pers_config.rdb_filename = "dump.rdb",
             .protocol.protocol_parser = kvs_resp_parser,

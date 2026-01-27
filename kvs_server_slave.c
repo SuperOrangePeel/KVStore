@@ -291,6 +291,11 @@ kvs_status_t kvs_slave_init(struct kvs_slave_s *slave, struct kvs_server_s *serv
     // slave->state = KVS_MY_MASTER_NONE;
     slave->server = server;
 
+    slave->master_ip = config->master_ip; // set master_ip
+    slave->master_port = config->master_port;
+    slave->rdb_recv_buffer_count = config->rdb_recv_buffer_count;
+    
+    slave->rdma_send_buf_size = config->rdma_send_buf_size;
     return KVS_OK;
 }
 kvs_status_t kvs_slave_deinit(struct kvs_slave_s *slave) {
@@ -409,24 +414,29 @@ static kvs_status_t _on_sync_response(struct kvs_slave_s *slave, struct kvs_conn
 
 
 static kvs_status_t _create_master_rdma_rdb_resources(struct kvs_slave_s *slave, struct kvs_my_master_context_s *master_ctx) {
+    struct kvs_rdma_conn_s *rdma_conn = master_ctx->rdma_conn;
     // allocate
-    master_ctx->send_buf = (char *)kvs_malloc(slave->server->rdma_max_chunk_size);
-    memset(master_ctx->send_buf, 0, slave->server->rdma_max_chunk_size);
-    master_ctx->send_buf_sz = slave->server->rdma_max_chunk_size;
-    master_ctx->send_mr = kvs_rdma_register_memory(&slave->server->rdma_engine, master_ctx->send_buf, slave->server->rdma_max_chunk_size, KVS_RDMA_OP_SEND);
+    master_ctx->send_buf = (char *)kvs_malloc(slave->rdma_send_buf_size);
+    memset(master_ctx->send_buf, 0, slave->rdma_send_buf_size);
+
+
+
+    master_ctx->send_buf_sz = slave->rdma_send_buf_size;
+    master_ctx->send_mr = kvs_rdma_register_memory_on_conn(rdma_conn, master_ctx->send_buf, slave->rdma_send_buf_size, KVS_RDMA_OP_SEND);
     if(master_ctx->send_mr == NULL) {
-        kvs_free(master_ctx->send_buf, slave->server->rdma_max_chunk_size);
+        kvs_free(master_ctx->send_buf, slave->rdma_send_buf_size);
         master_ctx->send_buf = NULL;
         LOG_FATAL("failed to register send MR");
         return KVS_ERR;
     }
+    
 
 
     // allocate RDB recv MR
     int rdb_max_chunk_size = slave->server->rdma_max_chunk_size;
     char *rdb_recv_buffer = (char *)kvs_malloc(rdb_max_chunk_size * slave->rdb_recv_buffer_count);
     LOG_DEBUG("Allocating RDB recv buffer: %zu bytes (%d chunks of %d bytes)", rdb_max_chunk_size * slave->rdb_recv_buffer_count, slave->rdb_recv_buffer_count, rdb_max_chunk_size);
-    master_ctx->rdb_recv_mr = kvs_rdma_register_memory(&slave->server->rdma_engine, rdb_recv_buffer, rdb_max_chunk_size * slave->rdb_recv_buffer_count, KVS_RDMA_OP_RECV);
+    master_ctx->rdb_recv_mr = kvs_rdma_register_memory_on_conn(rdma_conn, rdb_recv_buffer, rdb_max_chunk_size * slave->rdb_recv_buffer_count, KVS_RDMA_OP_RECV);
     if(master_ctx->rdb_recv_mr == NULL) {
         LOG_FATAL("failed to register RDB recv MR");
         return KVS_ERR;
@@ -456,7 +466,7 @@ static kvs_status_t _destroy_master_rdma_rdb_resources(struct kvs_slave_s *slave
         master_ctx->send_mr = NULL;
     }
     if(master_ctx->send_buf != NULL) {
-        kvs_free(master_ctx->send_buf, slave->server->rdma_max_chunk_size);
+        kvs_free(master_ctx->send_buf, slave->rdma_send_buf_size);
         master_ctx->send_buf = NULL;
     }
     if(master_ctx->rdb_recv_mr != NULL) {
@@ -506,7 +516,10 @@ static kvs_status_t _on_rdma_established(struct kvs_slave_s *slave, struct kvs_c
         kvs_rdma_post_recv(rdma_conn, master_ctx->rdb_recv_mr, i * master_ctx->rdb_recv_buf_sz, master_ctx->rdb_recv_buf_sz, NULL);
     }
 
-    int send_len = snprintf(master_ctx->send_buf, master_ctx->send_buf_sz, "READY\r\n");
+    int send_len = snprintf(master_ctx->send_buf, master_ctx->send_buf_sz, "+READY%d\r\n", master_ctx->rdb_recv_buffer_count);
+
+    master_ctx->rdma_spare_rdb_recv_buf_count = master_ctx->rdb_recv_buffer_count;
+    LOG_DEBUG("Sending READY to master via RDMA, recv_buf_count = %d", master_ctx->rdb_recv_buffer_count);
     kvs_rdma_post_send(rdma_conn, master_ctx->send_mr, 0, 0,send_len, NULL);
 
     return KVS_OK;
@@ -544,23 +557,32 @@ struct kvs_rdb_write_context_s {
     //char *recv_buffer; // registered buffer pointer
     //size_t length; //
     size_t offset; // rdb buffer offset
-    int is_end; // is last chunk
+    //int is_end; // is last chunk
+    struct kvs_event_s rdb_write_ev;
+};
+
+struct _kvs_fsync_context_s {
+    struct kvs_my_master_context_s *master_ctx;
+    struct kvs_event_s fsync_ev;
 };
 
 static void _kvs_my_master_handle_rdb_fsync_completion(void* ctx, int res, int flags) {
+    struct _kvs_fsync_context_s *fsync_ev = (struct _kvs_fsync_context_s *)ctx;
     // 1. 错误处理
     if(ctx == NULL) {
         LOG_FATAL("master_ctx is NULL in RDB fsync completion");
+        kvs_free(fsync_ev, sizeof(struct _kvs_fsync_context_s));
         return;
     }
     if(res < 0) {
         LOG_FATAL("RDB fsync failed: %d, %s", res, strerror(-res));
+        kvs_free(fsync_ev, sizeof(struct _kvs_fsync_context_s));
         return;
     }
     // 2. 事件完成，处理事件
     LOG_INFO("RDB fsync completed successfully");
 
-    struct kvs_my_master_context_s *master_ctx = (struct kvs_my_master_context_s *)ctx;
+    struct kvs_my_master_context_s *master_ctx = (struct kvs_my_master_context_s *)fsync_ev->master_ctx;
 
     // 3. 状态转换
     master_ctx->state = KVS_MY_MASTER_WAIT_SENT_ACK;
@@ -570,53 +592,62 @@ static void _kvs_my_master_handle_rdb_fsync_completion(void* ctx, int res, int f
     int rdma_send_buf_sz = master_ctx->send_buf_sz;
     int send_len = snprintf(rdma_send_buf, rdma_send_buf_sz, "ACK_RDB\r\n");
     struct kvs_rdma_conn_s *master_conn = (struct kvs_rdma_conn_s *)master_ctx->rdma_conn;
+    LOG_DEBUG("Sending ACK_RDB to master via RDMA, master_ctx: %p, send_mr: %p, len: %d, recv_mr: %p", master_ctx, master_ctx->send_mr, send_len, master_ctx->rdb_recv_mr);
     kvs_rdma_post_send(master_conn, master_ctx->send_mr, 0, 0, send_len, NULL);
 
-    return; 
+
+    kvs_free(fsync_ev, sizeof(struct _kvs_fsync_context_s));
+    return;
 }
+
 
 
 static void _kvs_my_master_rdb_fwrite_cb(void* ctx, int res, int flags) {
     if(ctx == NULL) {
         LOG_FATAL("master_ctx is NULL in RDB write completion");
-        assert(0);
-        return;
+         goto free_rdb_write_context;
     }
     struct kvs_rdb_write_context_s *rdb_write_ctx = (struct kvs_rdb_write_context_s *)ctx;
     struct kvs_my_master_context_s *master_ctx = rdb_write_ctx->master_ctx;
     //char *recv_buffer = rdb_write_ctx->recv_buffer;
     int write_offset = rdb_write_ctx->offset;
     //int write_len = rdb_write_ctx->length;
-    int is_end = rdb_write_ctx->is_end;
+   
 
-    kvs_free(rdb_write_ctx, sizeof(struct kvs_rdb_write_context_s));
     if(res < 0) {
         LOG_FATAL("RDB write failed: %d, %s", res, strerror(-res));
-        assert(0);
-        return;
+         goto free_rdb_write_context;
     }
     if(res == 0) {
         LOG_FATAL("RDB write returned 0 bytes written");
-        assert(0);
-        return;
+         goto free_rdb_write_context;
     }
     int written = res;
     master_ctx->rdb_offset += written;
+
+    int is_end = master_ctx->rdb_offset >= master_ctx->rdb_size ? 1 : 0;
+    LOG_DEBUG("RDB write callback: is_end:%d wrote %d bytes at offset %d, total written: %zu / %zu", 
+        is_end, written, write_offset, master_ctx->rdb_offset, master_ctx->rdb_size);
     if(is_end) {
         LOG_DEBUG("RDB write completed for last chunk, total written: %zu / %zu", master_ctx->rdb_offset, master_ctx->rdb_size);
         if(master_ctx->rdb_offset != master_ctx->rdb_size) {
             LOG_FATAL("RDB size mismatch on last chunk: expected %zu, got %zu", master_ctx->rdb_size, master_ctx->rdb_offset);
-            return;
+            goto free_rdb_write_context;
         }
         // RDB receiving complete
         LOG_DEBUG("RDB receiving complete, total size: %zu", master_ctx->rdb_offset);
 
-        struct kvs_event_s *fsync_ev = &master_ctx->rdb_fsync_ev;
-        fsync_ev->ctx = (void *)master_ctx;
-        fsync_ev->fd = master_ctx->rdb_fd;
-        fsync_ev->handler = _kvs_my_master_handle_rdb_fsync_completion; // not used
-        kvs_loop_add_fsync(&master_ctx->slave->server->loop, &master_ctx->rdb_fsync_ev, master_ctx->rdb_fd);
-        return;
+        struct _kvs_fsync_context_s * fsync_ev_ctx = (struct _kvs_fsync_context_s *)kvs_malloc(sizeof(struct _kvs_fsync_context_s));
+        //memset(fsync_ev, 0, sizeof(struct kvs_event_s));
+
+        fsync_ev_ctx->master_ctx = (void *)master_ctx;
+        fsync_ev_ctx->fsync_ev.fd = master_ctx->rdb_fd;
+        LOG_INFO("Starting RDB fsync..., master_ctx: %p, rdb_fd: %d, master_ctx->recv_mr: %p, send_mr: %p", master_ctx, master_ctx->rdb_fd, master_ctx->rdb_recv_mr, master_ctx->send_mr);
+        fsync_ev_ctx->fsync_ev.handler = _kvs_my_master_handle_rdb_fsync_completion; // not used
+        fsync_ev_ctx->fsync_ev.ctx = (void *)fsync_ev_ctx;
+        kvs_loop_add_fsync(&master_ctx->slave->server->loop, &fsync_ev_ctx->fsync_ev, master_ctx->rdb_fd); // free write context before returning
+        
+        goto free_rdb_write_context;
     }
 
     LOG_DEBUG("RDB write completed, total written: %zu / %zu", master_ctx->rdb_offset, master_ctx->rdb_size);
@@ -624,18 +655,30 @@ static void _kvs_my_master_rdb_fwrite_cb(void* ctx, int res, int flags) {
     struct kvs_rdma_conn_s *master_conn = (struct kvs_rdma_conn_s *)master_ctx->rdma_conn;
     if(master_conn == NULL) {
         LOG_FATAL("master_conn is NULL in RDB write completion");
-        return;
+ 
+        goto free_rdb_write_context;
     }
 
+    
     kvs_rdma_post_recv(master_conn, master_ctx->rdb_recv_mr, write_offset, master_ctx->rdb_recv_buf_sz, NULL);
 
+    int len = snprintf(master_ctx->send_buf, master_ctx->send_buf_sz, "RECV_ACK\r\n");
+    kvs_rdma_post_send(master_conn, master_ctx->send_mr, 0, 0, len, NULL);
+    LOG_DEBUG("Posted RDMA recv for next RDB chunk at offset %d", write_offset);
+
+free_rdb_write_context:
+    kvs_free(rdb_write_ctx, sizeof(struct kvs_rdb_write_context_s)); 
+    return;
     // post more RDMA recv
 }
 
 static kvs_status_t _on_recv_rdb(struct kvs_slave_s *slave, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
-    if(trigger != KVS_EVENT_READ_READY) {
-        LOG_FATAL("invalid trigger: %d", trigger);
-        return KVS_ERR;
+    // if(trigger != KVS_EVENT_READ_READY) {
+    //     LOG_FATAL("invalid trigger: %d", trigger);
+    //     return KVS_ERR;
+    // }
+    if(trigger == KVS_EVENT_WRITE_DONE) {
+        return KVS_OK; // 这是fwrite_cb中给master发送ACK的send完成事件，不处理，告知master有一个recv buf空出来了
     }
     if(conn->type != KVS_CONN_RDMA || slave == NULL || conn == NULL) {
         LOG_FATAL("invalid conn type: %d or slave == NULL is %d or conn == NULL is %d", conn->type, slave == NULL, conn == NULL);
@@ -655,19 +698,22 @@ static kvs_status_t _on_recv_rdb(struct kvs_slave_s *slave, struct kvs_conn_head
     LOG_DEBUG("RDB chunk received via RDMA: offset %d, length %d, imm_data %d", write_offset, write_len, imm_data);
     // imm_data没发过来，不知道为什么？
     
-    struct kvs_event_s *rdb_write_ev = &master_ctx->rdb_write_ev;
+    //struct kvs_event_s *rdb_write_ev = &master_ctx->rdb_write_ev;
     LOG_DEBUG("RECEIVED RDB chunk: offset %d, length %d, imm_data %d", write_offset, write_len, imm_data);
     
     struct kvs_rdb_write_context_s *rdb_write_ctx = (struct kvs_rdb_write_context_s *)kvs_malloc(sizeof(struct kvs_rdb_write_context_s));
+    struct kvs_event_s *rdb_write_ev = &rdb_write_ctx->rdb_write_ev;
+    memset(rdb_write_ctx, 0, sizeof(struct kvs_rdb_write_context_s));
     rdb_write_ctx->master_ctx = master_ctx;
     //rdb_write_ctx->recv_buffer = master_ctx->rdb_recv_buffer; // registered buffer pointer
     //rdb_write_ctx->length = write_len;
     rdb_write_ctx->offset = write_offset;
     //rdb_write_ctx->is_end = (imm_data == -1) ? 1 : 0;
-    rdb_write_ctx->is_end = (master_ctx->rdb_offset + write_len >= master_ctx->rdb_size) ? 1 : 0;
+    //db_write_ctx->is_end = (master_ctx->rdb_offset + write_len >= master_ctx->rdb_size) ? 1 : 0;
+    //LOG_DEBUG("RDB write context is_end: %d, rdb_offset: %zu, write_len %d, rdb_size: %d", rdb_write_ctx->is_end, master_ctx->rdb_offset, write_len, master_ctx->rdb_size);
     rdb_write_ev->ctx = (void *)rdb_write_ctx;
     
-    mem_hexdump(master_ctx->rdb_recv_buffer + write_offset, write_len, "RDB chunk data dump:");
+    //mem_hexdump(master_ctx->rdb_recv_buffer + write_offset, write_len, "RDB chunk data dump:");
     // 如果没有赋值fd，就赋值
     if(rdb_write_ev->fd != master_ctx->rdb_fd) {
         rdb_write_ev->fd = master_ctx->rdb_fd;
@@ -675,7 +721,8 @@ static kvs_status_t _on_recv_rdb(struct kvs_slave_s *slave, struct kvs_conn_head
         
     }
     
-    kvs_loop_add_write(&slave->server->loop, rdb_write_ev, master_ctx->rdb_recv_buffer + write_offset, write_len);
+    kvs_loop_add_write(&slave->server->loop, rdb_write_ev, master_ctx->rdb_recv_buffer + write_offset, write_len, master_ctx->rdb_write_offset);
+    master_ctx->rdb_write_offset += write_len;
 
     return KVS_OK;
 }

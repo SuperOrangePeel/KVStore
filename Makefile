@@ -18,6 +18,7 @@ subdirs : $(SUBDIRS)
 $(TARGET): $(OBJS) 
 	$(CC) -o $@ $^ $(FLAGS)
 	rm -rf ./test_slave/*
+	cp $(TARGET) ./test_slave/
 	
 
 %.o: %.c

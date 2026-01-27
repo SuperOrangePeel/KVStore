@@ -58,7 +58,7 @@ int kvs_loop_add_accept(kvs_loop_t *loop, kvs_event_t *ev, struct sockaddr *addr
 int kvs_loop_add_send(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len); 
 int kvs_loop_add_recv(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len);
 
-int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
+int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len, off_t offset);
 int kvs_loop_add_fsync(kvs_loop_t *loop, kvs_event_t *ev, int fd);
 int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
 

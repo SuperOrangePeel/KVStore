@@ -51,12 +51,15 @@ struct kvs_protocol_s {
 struct kvs_master_config_s {
     int max_slave_count;
     size_t repl_backlog_size;
+    int rdma_recv_buffer_count;
+    int rdma_recv_buf_size;
 };
 
 struct kvs_slave_config_s {
     const char *master_ip;
     unsigned short master_port;
     int rdb_recv_buffer_count;
+    int rdma_send_buf_size;
 };
 
 struct kvs_server_config_s {
@@ -122,8 +125,9 @@ typedef enum {
     KVS_MY_SLAVE_WAIT_SENT_RDMA_INFO, // 等待发送 RDMA 连接信息
     KVS_MY_SLAVE_WAIT_RDMA_CONNECT_REQUEST, // 等待 Slave 发起 RDMA 连接请求
     KVS_MY_SLAVE_WAIT_RDMA_ESTABLISHED, // 等待 RDMA 连接建立完成
-    KVS_MY_SLAVE_WAIT_RDMA_RECV_READY, // 等待 Slave 准备好接收 RDB
+    KVS_MY_SLAVE_WAIT_RDMA_RECV_READY, // 等待 Slave 准备好RDMA的recv buf
     KVS_MY_SLAVE_WAIT_RDB_SENT,     // 正在发送 RDB 文件流
+    //KVS_MY_SLAVE_WAIT_RDB_BUF_RECV_READY, // SLAVE的rdma接收buf用完，等待slave准备好接收更多RDB数据
     KVS_MY_SLAVE_WAIT_RDB_ACK,    // 等待 Slave RDB 接收完成确认
     KVS_MY_SLAVE_WAIT_SLAVE_LOAD_ACK, // 等待 Slave RDB 加载完成确认
     KVS_MY_SLAVE_WAIT_BACKLOG_SENT, // 正在发送 Backlog 积压数据
@@ -201,8 +205,13 @@ struct kvs_my_slave_context_s {
     size_t repl_backlog_offset;
     size_t rdb_offset;
 
+    int slave_recv_buf_count;
+    //int rdb_sent_done; // whether rdb file is completely sent
+
     char *recv_buf; // buffer for receiving rdb data
     int recv_buf_sz;
+    int rdma_recv_buffer_count;
+    int rdb_is_sending; // whether there is an ongoing rdb RDMA send operation
     struct kvs_rdma_mr_s *recv_mr;
 
     uint64_t rdma_token;
@@ -235,6 +244,7 @@ struct kvs_my_master_context_s {
 
     char *rdb_recv_buffer;
     int rdb_recv_buffer_count;
+    int rdma_spare_rdb_recv_buf_count;
     size_t rdb_recv_buf_sz;
     struct kvs_rdma_mr_s *rdb_recv_mr;
 
@@ -244,9 +254,12 @@ struct kvs_my_master_context_s {
 
     int ref_count;
     int rdb_fd;
-    size_t rdb_offset;
-    struct kvs_event_s rdb_write_ev;
-    struct kvs_event_s rdb_fsync_ev;
+    size_t rdb_offset; // 已经写入 RDB 文件的偏移量
+    size_t rdb_write_offset; // 正在写入 RDB 文件的偏移量，防止多次写入事件重叠
+
+    
+    //struct kvs_event_s rdb_write_ev;
+    //struct kvs_event_s rdb_fsync_ev;
 
     int recv_len_cur;
     int sent_len_cur;
@@ -270,6 +283,7 @@ struct kvs_slave_s {
     //kvs_my_master_state_t state; // SYNC_HANDSHAKE, SYNC_RDB, SYNC_AOF, SYNC_CONNECTED
     struct kvs_server_s *server;
     int rdb_recv_buffer_count;
+    int rdma_send_buf_size; // 需要和master的recv buf size一致
 };
 
 
@@ -280,7 +294,8 @@ struct kvs_master_s {
     int syncing_rdb_slaves_count; // number of slaves in RDB SYNC process
     int syncing_slaves_count; // number of slaves in SYNC process
 
-
+    int rdma_recv_buffer_count;
+    int rdma_recv_buf_size;
     int max_slave_count;
     
     char *repl_backlog;

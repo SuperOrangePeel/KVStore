@@ -106,11 +106,11 @@ int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) 
     return 0;
 }
 
-int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
+int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len, off_t offset) {
     struct io_uring_sqe *sqe = get_sqe_safe(loop);
     if (!sqe) return -1;
 
-    io_uring_prep_write(sqe, ev->fd, buf, len, 0);
+    io_uring_prep_write(sqe, ev->fd, buf, len, offset);
     io_uring_sqe_set_data(sqe, ev);
     return 0;
 }

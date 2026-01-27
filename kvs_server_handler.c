@@ -119,15 +119,21 @@ int kvs_handler_on_rdma_connect_request(struct kvs_rdma_conn_s *conn) {
 		assert(0);
 	}
 	kvs_status_t status = kvs_master_slave_state_machine_tick(server->master, (struct kvs_conn_header_s *)conn, KVS_EVENT_CONNECTED);
+
 	struct kvs_my_slave_context_s* slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
+	if(slave_ctx == NULL) {
+		LOG_FATAL("slave_ctx is NULL after rdma connect request state machine");
+		return KVS_ERR;
+	}
 	if(status == KVS_QUIT) {
 		LOG_INFO("RDMA connection request rejected by state machine, token: %ld", slave_ctx->rdma_token);
 		return -1; // reject connection
 	}
 
 	if(status != KVS_OK) {
-		LOG_FATAL("Error in RDMA connection request state machine, token: %ld", slave_ctx->rdma_token);
-		assert(0);
+		// LOG_FATAL("Error in RDMA connection request state machine, token: %ld", slave_ctx->rdma_token);
+		// assert(0);
+		LOG_DEBUG("Error in RDMA connection request state machine, token: %ld", slave_ctx->rdma_token);
 		return KVS_ERR;
 	}
 
@@ -200,7 +206,7 @@ int kvs_handler_on_rdma_cq_recv(struct kvs_rdma_conn_s *conn, size_t recv_off_se
 		assert(0);
 		return KVS_ERR;
 	}
-	LOG_DEBUG("RDMA recv on cm_id %p, offset: %zu, len: %d, imm_data: %d", conn->cm_id, recv_off_set, recv_len, imm_data);
+	//LOG_DEBUG("RDMA recv on cm_id %p, offset: %zu, len: %d, imm_data: %d", conn->cm_id, recv_off_set, recv_len, imm_data);
 	if(ctx_header->type == KVS_CTX_MASTER_OF_ME) {
 		return kvs_my_master_on_rdma_recv(conn, recv_off_set, recv_len, imm_data);
 	} else if(ctx_header->type == KVS_CTX_SLAVE_OF_ME) {
@@ -221,7 +227,7 @@ int kvs_handler_on_rdma_cq_send(struct kvs_rdma_conn_s *conn, size_t send_off_se
 		return KVS_ERR;
 	}
 	
-	LOG_DEBUG("conn type: %d, RDMA send on cm_id %p, offset: %zu", ctx_header->type, conn->cm_id, send_off_set);
+	//LOG_DEBUG("conn type: %d, RDMA send on cm_id %p, offset: %zu", ctx_header->type, conn->cm_id, send_off_set);
 	if(ctx_header->type == KVS_CTX_MASTER_OF_ME) {
 		return kvs_my_master_on_rdma_send(conn, send_off_set, send_len);
 	} else if(ctx_header->type == KVS_CTX_SLAVE_OF_ME) {

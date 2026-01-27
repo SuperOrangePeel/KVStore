@@ -75,9 +75,7 @@ int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *con
 		server->role = KVS_SERVER_ROLE_SLAVE;
 		struct kvs_slave_s *slave = server->slave;
 		slave = (struct kvs_slave_s*)kvs_malloc(sizeof(struct kvs_slave_s));
-		slave->master_ip = config_pt->slave_config.master_ip; // set master_ip
-		slave->master_port = config_pt->slave_config.master_port;
-		slave->rdb_recv_buffer_count = config_pt->slave_config.rdb_recv_buffer_count;
+
 		if(kvs_slave_init(slave, server, &config_pt->slave_config) != KVS_OK) {
 			printf("kvs_slave_init failed\n");
 			assert(0);
@@ -384,6 +382,8 @@ kvs_status_t kvs_server_create_conn_ctx(struct kvs_server_s *server, struct kvs_
 				slave_ctx->master = server->master; // back reference to master
 				slave_ctx->header.conn = (struct kvs_conn_s *)conn;
 				conn->user_data = (void*)slave_ctx;
+
+				slave_ctx->rdma_recv_buffer_count = server->master->rdma_recv_buffer_count;
 				LOG_INFO("created slave_ctx, ref_count: %d", slave_ctx->ref_count);
 			}
 			break;
