@@ -103,7 +103,8 @@ int kvs_server_load_rdb(struct kvs_server_s *server) {
     struct stat file_stat;
 	if(stat(server->pers_ctx->rdb_filename, &file_stat) != 0){
 		// rdb file not exist, skip
-		printf("RDB file not exist, skip RDB recovery.\n");
+		//printf("RDB file not exist, skip RDB recovery.\n");
+        LOG_INFO("RDB file not exist, skip RDB recovery.");
 		return KVS_ERR;
 	}
 

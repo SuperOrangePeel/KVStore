@@ -60,7 +60,7 @@ typedef enum {
 typedef enum {
     KVS_CMD_INVALID = -1,
 	KVS_CMD_START = 0,
-	// array
+	// hash
 	KVS_CMD_SET = KVS_CMD_START,
 	KVS_CMD_GET,
 	KVS_CMD_DEL,
@@ -72,12 +72,12 @@ typedef enum {
 	KVS_CMD_RDEL,
 	KVS_CMD_RMOD,
 	KVS_CMD_REXIST,
-	// hash
-	KVS_CMD_HSET,
-	KVS_CMD_HGET,
-	KVS_CMD_HDEL,
-	KVS_CMD_HMOD,
-	KVS_CMD_HEXIST,
+	// array
+	KVS_CMD_ASET,
+	KVS_CMD_AGET,
+	KVS_CMD_ADEL,
+	KVS_CMD_AMOD,
+	KVS_CMD_AEXIST,
 	//save
 	KVS_CMD_SAVE,
 	//slave sync

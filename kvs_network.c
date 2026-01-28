@@ -388,7 +388,7 @@ kvs_status_t kvs_net_deinit(struct kvs_network_s  *net) {
         close(net->server_fd);
         net->server_fd = -1;
     }
-    kvs_loop_deinit(net->loop);
+    //kvs_loop_deinit(net->loop);
     kvs_free(net->conn_pool, sizeof(struct kvs_conn_s) * net->max_conns);
     net->conn_pool = NULL;
 

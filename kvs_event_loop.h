@@ -1,5 +1,5 @@
-#ifndef KVS_LOOP_H
-#define KVS_LOOP_H
+#ifndef __KVS_LOOP_H__
+#define __KVS_LOOP_H__
 
 #include <liburing.h>
 #include <sys/socket.h>
@@ -59,7 +59,11 @@ int kvs_loop_add_send(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
 int kvs_loop_add_recv(kvs_loop_t *loop, kvs_event_t *ev, void* buf, size_t len);
 
 int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len, off_t offset);
+int kvs_loop_add_write_with_flags(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len, off_t offset, unsigned int flags);
+int kvs_loop_add_writev(kvs_loop_t *loop, kvs_event_t *ev, struct iovec *iovs, int iovcnt, off_t offset);
+
 int kvs_loop_add_fsync(kvs_loop_t *loop, kvs_event_t *ev, int fd);
+int kvs_loop_add_fsync_with_flags(kvs_loop_t *loop, kvs_event_t *ev, int fd, unsigned int flags);
 int kvs_loop_add_read(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len);
 
 int kvs_loop_add_timeout(kvs_loop_t *loop, kvs_event_t *ev, struct __kernel_timespec *ts);

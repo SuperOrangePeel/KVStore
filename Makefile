@@ -17,7 +17,8 @@ subdirs : $(SUBDIRS)
 
 $(TARGET): $(OBJS) 
 	$(CC) -o $@ $^ $(FLAGS)
-	rm -rf ./test_slave/*
+	rm -rf ./test_slave/$(TARGET)
+	rm -rf ./test_slave/dump.rdb
 	cp $(TARGET) ./test_slave/
 	
 
@@ -33,12 +34,11 @@ clean:
     done
 	rm -rf kvstore.aof
 	rm -rf dump.rdb
-	rm -rf ./test_slave/*
+	rm -rf ./test_slave/$(TARGET)
+	rm -rf ./test_slave/dump.rdb
 
 restore:
 	rm -rf kvstore.aof
 	cp kvstore.aof.bk kvstore.aof
-	cp $(TARGET) ./test_slave/
-
 
 .PHONY: all clean

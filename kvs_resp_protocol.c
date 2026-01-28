@@ -11,11 +11,12 @@
 const char *command[] = {
 	"SET", "GET", "DEL", "MOD", "EXIST",
 	"RSET", "RGET", "RDEL", "RMOD", "REXIST",
-	"HSET", "HGET", "HDEL", "HMOD", "HEXIST",
+	"ASET", "AGET", "ADEL", "AMOD", "AEXIST",
 	"SAVE", "SYNC", "SYNC_RDMA"
 };
 
 const int command_type[] = {
+	// hash
 	[KVS_CMD_SET] = KVS_CMD_WRITE,
 	[KVS_CMD_GET] = KVS_CMD_READ,
 	[KVS_CMD_DEL] = KVS_CMD_WRITE,
@@ -27,12 +28,12 @@ const int command_type[] = {
 	[KVS_CMD_RDEL] = KVS_CMD_WRITE,
 	[KVS_CMD_RMOD] = KVS_CMD_WRITE,
 	[KVS_CMD_REXIST] = KVS_CMD_READ,
-	// hash
-	[KVS_CMD_HSET] = KVS_CMD_WRITE,
-	[KVS_CMD_HGET] = KVS_CMD_READ,
-	[KVS_CMD_HDEL] = KVS_CMD_WRITE,
-	[KVS_CMD_HMOD] = KVS_CMD_WRITE,
-	[KVS_CMD_HEXIST] = KVS_CMD_READ,
+	// array
+	[KVS_CMD_ASET] = KVS_CMD_WRITE,
+	[KVS_CMD_AGET] = KVS_CMD_READ,
+	[KVS_CMD_ADEL] = KVS_CMD_WRITE,
+	[KVS_CMD_AMOD] = KVS_CMD_WRITE,
+	[KVS_CMD_AEXIST] = KVS_CMD_READ,
 	//save
 	[KVS_CMD_SAVE] = KVS_CMD_OTHER,
 	//slave sync

@@ -172,18 +172,18 @@ kvs_status_t kvs_rdma_post_listen(struct kvs_rdma_engine_s *rdma) {
     rdma->rdma_listen_id->context = (void *)rdma;
     int ret = rdma_bind_addr(rdma->rdma_listen_id, (struct sockaddr *)&addr);
     if (ret) {
-        LOG_ERROR("rdma_bind_addr failed: %s (code: %d)\n", strerror(errno), errno);
+        LOG_ERROR("rdma_bind_addr failed: %s (code: %d)", strerror(errno), errno);
         return KVS_ERR;
     }
 
     ret = rdma_listen(rdma->rdma_listen_id, 10); // backlog = 10
     //rdma->verbs = rdma->rdma_listen_id->verbs;
     if (ret) {
-        LOG_ERROR("rdma_listen failed: %s (code: %d)\n", strerror(errno), errno);
+        LOG_ERROR("rdma_listen failed: %s (code: %d)", strerror(errno), errno);
         return KVS_ERR;
     }
     //_kvs_rdma_create_global_resources(rdma, rdma->rdma_listen_id->verbs);
-    LOG_INFO("RDMA listening on %s:%d\n", ip, port);
+    LOG_INFO("RDMA listening on %s:%d", ip, port);
     return KVS_OK;
 }
 
@@ -197,14 +197,14 @@ kvs_status_t kvs_rdma_post_connect(struct kvs_rdma_engine_s *rdma,  const char *
 
     int ret = rdma_create_id(rdma->event_channel, &rdma->rdma_conn_id, NULL, RDMA_PS_TCP);
     if(ret) {
-        LOG_ERROR("rdma_create_id failed: %s (code: %d)\n", strerror(errno), errno);
+        LOG_ERROR("rdma_create_id failed: %s (code: %d)", strerror(errno), errno);
         return KVS_ERR;
     }
     struct rdma_cm_id *conn_id = rdma->rdma_conn_id;
 
     ret = rdma_resolve_addr(rdma->rdma_conn_id, NULL, (struct sockaddr *)&server_addr, 2000); // timeout in ms
     if (ret) {
-        LOG_ERROR("rdma_resolve_addr failed: %s (code: %d)\n", strerror(errno), errno);
+        LOG_ERROR("rdma_resolve_addr failed: %s (code: %d)", strerror(errno), errno);
         return KVS_ERR;
     }
     // rdma->private_data = (void *)priv_data;
@@ -268,7 +268,7 @@ int _kvs_rdma_on_disconnected(struct rdma_cm_id *id) {
 static void _rdma_event_handler(void *ctx, int res, int flags){
     struct kvs_rdma_engine_s *rdma = (struct kvs_rdma_engine_s *)ctx;
     if(res < 0) {
-        LOG_ERROR("rdma_event_handler error: %s (code: %d)\n", strerror(-res), res);
+        LOG_ERROR("rdma_event_handler error: %s (code: %d)", strerror(-res), res);
         return;
     }
 
@@ -280,13 +280,13 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
                 // No more events to process
                 break;
             } else {
-                LOG_ERROR("rdma_get_cm_event failed, %s (code: %d)\n", strerror(errno), errno);
+                LOG_ERROR("rdma_get_cm_event failed, %s (code: %d)", strerror(errno), errno);
                 assert(0);
                 break;
             }
         }
         if(event->status < 0) {
-            LOG_ERROR("rdma cm event error: %s (code: %d)\n", strerror(-event->status), event->status);
+            LOG_ERROR("rdma cm event error: %s (code: %d)", strerror(-event->status), event->status);
             rdma_ack_cm_event(event);
             continue;
         }
@@ -295,7 +295,7 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
         struct rdma_cm_id *id = event->id;
         struct kvs_rdma_conn_s *conn = (struct kvs_rdma_conn_s *)id->context;
         if(event->listen_id != NULL) {
-            LOG_DEBUG("RDMA event on listen id.\n");
+            LOG_DEBUG("RDMA event on listen id.");
             // server listen id context is kvs_rdma_engine_s
             // rdma = (struct kvs_rdma_engine_s *)event->listen_id->context;
         }
@@ -308,19 +308,20 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
         switch(type) {
             case RDMA_CM_EVENT_ADDR_RESOLVED:
                 if (0 != rdma_resolve_route(id, 2000)) {
-                    perror("rdma_resolve_route failed\n");
+                    //perror("rdma_resolve_route failed\n");
+                    LOG_ERROR("rdma_resolve_route failed: %s (code: %d)", strerror(errno), errno);
                     assert(0);
                 }
-                LOG_DEBUG("Address resolved.\n");
+                LOG_DEBUG("Address resolved.");
                 break;
             case RDMA_CM_EVENT_ROUTE_RESOLVED:
                 _kvs_rdma_init_conn(conn);
                 _kvs_rdma_on_route_resolved(event->id);
-                LOG_DEBUG("Route resolved.\n");
+                LOG_DEBUG("Route resolved.");
                 
                 break;
             case RDMA_CM_EVENT_CONNECT_REQUEST: {
-                LOG_DEBUG("Invoking on_connect_request callback.\n");
+                LOG_DEBUG("Invoking on_connect_request callback.");
                 //_kvs_rdma_create_global_resources(rdma, event->id->verbs);
                 if(event->id == NULL) {
                     LOG_ERROR("rdma_cm_event CONNECT_REQUEST with NULL id");
@@ -343,7 +344,7 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
                         rdma_reject(event->id, NULL, 0);
                         _kvs_rdma_deinit_conn(conn);
                         _kvs_rdma_destroy_conn(conn);
-                        LOG_DEBUG("Connection request rejected.\n");
+                        LOG_DEBUG("Connection request rejected.");
                     } else {
                         struct rdma_conn_param conn_param;
                         memset(&conn_param, 0, sizeof(conn_param));
@@ -353,10 +354,11 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
                         //conn_param.rnr_retry = 7;           // 【关键】对端没铺坑时的重试次数 (7 表示无限重试)
                         conn_param.rnr_retry_count = 7;
                         if (0 != rdma_accept(conn->cm_id, &conn_param)) {
-                            perror("rdma_accept failed\n");
+                            //perror("rdma_accept failed\n");
+                            LOG_ERROR("rdma_accept failed: %s (code: %d)", strerror(errno), errno);
                             exit(-1);
                         }
-                        LOG_DEBUG("Connection request accepted.\n");
+                        LOG_DEBUG("Connection request accepted.");
                     }
                 }
 
@@ -370,7 +372,7 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
                 if(rdma->callbacks.on_established) {
                     rdma->callbacks.on_established(conn);
                 }
-                LOG_DEBUG("Connection established.\n");
+                LOG_DEBUG("Connection established.");
                 break;
             case RDMA_CM_EVENT_DISCONNECTED:
                 
@@ -388,7 +390,7 @@ static void _rdma_event_handler(void *ctx, int res, int flags){
                     type == RDMA_CM_EVENT_CONNECT_ERROR || 
                     type == RDMA_CM_EVENT_UNREACHABLE || 
                     type == RDMA_CM_EVENT_REJECTED) {
-                    LOG_DEBUG("Invoking on_error callback for event type %d.\n", type);
+                    LOG_DEBUG("Invoking on_error callback for event type %d.", type);
                     if (rdma->callbacks.on_error) {
                         rdma->callbacks.on_error(conn, type, event->status);
                     }
@@ -416,10 +418,10 @@ void _rdma_wc_handler(void *ctx, int res, int flags){
     struct kvs_rdma_conn_s *conn = (struct kvs_rdma_conn_s *)ctx;
     struct kvs_rdma_engine_s *rdma = conn->rdma_engine;
     if(res < 0) {
-        LOG_ERROR("rdma_event_handler error: %s (code: %d)\n", strerror(-res), res);
+        LOG_ERROR("rdma_event_handler error: %s (code: %d)", strerror(-res), res);
         return;
     }
-    LOG_INFO("RDMA work completion handler invoked.\n");
+    LOG_INFO("RDMA work completion handler invoked.");
     struct ibv_cq *cq;
     void *ctx_wc = NULL;
     struct ibv_wc wc[10];
@@ -432,11 +434,11 @@ void _rdma_wc_handler(void *ctx, int res, int flags){
         if(ret == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // No more events to process
-                LOG_DEBUG("No more CQ events to process.\n");
+                LOG_DEBUG("No more CQ events to process.");
                 //kvs_loop_add_poll_in(rdma->loop, &rdma->wc_event);
                 break;
             } else {
-                LOG_ERROR("ibv_get_cq_event failed, %s (code: %d)\n", strerror(errno), errno);
+                LOG_ERROR("ibv_get_cq_event failed, %s (code: %d)", strerror(errno), errno);
                 assert(0);
                 break;
             }
@@ -465,7 +467,7 @@ void _rdma_wc_handler(void *ctx, int res, int flags){
                 if(cur_wc->status == IBV_WC_SUCCESS) {
                     //LOG_DEBUG("RDMA work completed successfully for wr_id: %lu\n", cur_wc->wr_id);
                 } else {
-                    LOG_ERROR("RDMA work completion error for wr_id: %lu, status: %s (code: %d)\n", 
+                    LOG_ERROR("RDMA work completion error for wr_id: %lu, status: %s (code: %d)", 
                         cur_wc->wr_id, ibv_wc_status_str((enum ibv_wc_status)cur_wc->status), cur_wc->status);
                         continue;
                     
@@ -519,7 +521,7 @@ int kvs_rdma_init_engine(struct kvs_rdma_engine_s *rdma, struct kvs_loop_s *loop
     rdma->rdma_ip = ip;
     rdma->rdma_port = config->server_port;
 
-    LOG_DEBUG("Initializing RDMA engine on %s:%d\n", ip, rdma->rdma_port);
+    LOG_DEBUG("Initializing RDMA engine on %s:%d", ip, rdma->rdma_port);
     rdma->cq_size = config->cq_size;
     rdma->max_recv_wr = config->max_recv_wr;
     rdma->max_send_wr = config->max_send_wr;

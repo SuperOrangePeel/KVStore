@@ -307,7 +307,7 @@ static kvs_status_t _on_rdb_sent_begin(struct kvs_master_s *master, struct kvs_r
         if(master->server->use_rdma) {
             master->rdb_mmap = mmap(NULL, master->rdb_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, master->rdb_fd, 0);
             if(master->rdb_mmap == MAP_FAILED) {
-                LOG_FATAL("mmap RDB file failed: %s", strerror(errno));
+                LOG_FATAL("mmap RDB file failed: %s, rdb fd: %d", strerror(errno), master->rdb_fd);
                 return KVS_ERR;
             }
             madvise(master->rdb_mmap, master->rdb_size, MADV_SEQUENTIAL);

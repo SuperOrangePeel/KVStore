@@ -90,7 +90,11 @@ kvs_result_t _kvs_exec_hset(struct kvs_server_s *server, struct kvs_handler_cmd_
     if(server == NULL || cmd == NULL) {
         return KVS_RES_ERR;
     }
-    return kvs_server_hset(server, cmd->key, cmd->len_key, cmd->val, cmd->len_val);
+    kvs_result_t result = kvs_server_hset(server, cmd->key, cmd->len_key, cmd->val, cmd->len_val);
+    if(result == KVS_RES_EXIST) {
+        result = KVS_RES_OK; // for redis-benchmark compatibility
+    }
+    return result;
 }
 
 kvs_result_t _kvs_exec_hget(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
@@ -167,12 +171,21 @@ kvs_result_t _kvs_exec_slave_sync_rdma(struct kvs_server_s *server, struct kvs_h
     return KVS_RES_SYNC_SLAVE;
 }
 
+
+// static cmd_proc_t command_table_test_redis[] = {
+//     [KVS_CMD_SET] = _kvs_exec_hset,
+//     [KVS_CMD_GET] = _kvs_exec_hget,
+//     [KVS_CMD_DEL] = _kvs_exec_hdel,
+//     [KVS_CMD_MOD] = _kvs_exec_hmod,
+//     [KVS_CMD_EXIST] = _kvs_exec_hexist,
+// };
+
 static cmd_proc_t command_table[] = {
-    [KVS_CMD_SET] = _kvs_exec_set,
-    [KVS_CMD_GET] = _kvs_exec_get,
-    [KVS_CMD_DEL] = _kvs_exec_del,
-    [KVS_CMD_MOD] = _kvs_exec_mod,
-    [KVS_CMD_EXIST] = _kvs_exec_exist,
+    [KVS_CMD_SET] = _kvs_exec_hset,
+    [KVS_CMD_GET] = _kvs_exec_hget,
+    [KVS_CMD_DEL] = _kvs_exec_hdel,
+    [KVS_CMD_MOD] = _kvs_exec_hmod,
+    [KVS_CMD_EXIST] = _kvs_exec_hexist,
     // rbtree
     [KVS_CMD_RSET] = _kvs_exec_rset,
     [KVS_CMD_RGET] = _kvs_exec_rget,
@@ -180,11 +193,11 @@ static cmd_proc_t command_table[] = {
     [KVS_CMD_RMOD] = _kvs_exec_rmod,
     [KVS_CMD_REXIST] = _kvs_exec_rexist,
     // hash
-    [KVS_CMD_HSET] = _kvs_exec_hset,
-    [KVS_CMD_HGET] = _kvs_exec_hget,
-    [KVS_CMD_HDEL] = _kvs_exec_hdel,
-    [KVS_CMD_HMOD] = _kvs_exec_hmod,
-    [KVS_CMD_HEXIST] = _kvs_exec_hexist,
+    [KVS_CMD_ASET] = _kvs_exec_set,
+    [KVS_CMD_AGET] = _kvs_exec_get,
+    [KVS_CMD_ADEL] = _kvs_exec_del,
+    [KVS_CMD_AMOD] = _kvs_exec_mod,
+    [KVS_CMD_AEXIST] = _kvs_exec_exist,
     //save
     [KVS_CMD_SAVE] = _kvs_exec_save,
     //slave sync

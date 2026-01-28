@@ -63,37 +63,55 @@ int kvs_config_load(kvs_config_t *conf, const char *filename) {
     if (server) {
         CONF_GET_STR(server, "bind_ip", conf->bind_ip, "0.0.0.0");
         CONF_GET_INT(server, "port", conf->port, KVS_DEFAULT_PORT);
-        CONF_GET_INT(server, "backlog", conf->backlog, KVS_DEFAULT_BACKLOG);
+        CONF_GET_INT(server, "repl_backlog_size", conf->repl_backlog_size, KVS_DEFAULT_BACKLOG);
+        CONF_GET_INT(server, "max_tcp_connections", conf->max_tcp_connections, KVS_DEFAULT_BACKLOG);
         CONF_GET_STR(server, "log_level", conf->log_level, KVS_DEFAULT_LOG_LEVEL);
         CONF_GET_INT(server, "io_uring_entries", conf->io_uring_entries, KVS_DEFAULT_IO_URING_ENTRIES);
+        CONF_GET_INT(server, "tcp_recv_buf_size", conf->tcp_recv_buf_size, 1048576);
+        CONF_GET_INT(server, "tcp_send_buf_size", conf->tcp_send_buf_size, 1048576);
     } else {
         // 使用默认值填充
         strcpy(conf->bind_ip, "0.0.0.0");
         conf->port = KVS_DEFAULT_PORT;
-        conf->backlog = KVS_DEFAULT_BACKLOG;
+        conf->repl_backlog_size = KVS_DEFAULT_BACKLOG;
         strcpy(conf->log_level, KVS_DEFAULT_LOG_LEVEL);
         conf->io_uring_entries = KVS_DEFAULT_IO_URING_ENTRIES;
+        conf->tcp_recv_buf_size = 1048576;
+        conf->tcp_send_buf_size = 1048576;
     }
 
     // 4. 读取 Section: [persistence]
     toml_table_t *persist = toml_table_in(root, "persistence");
     if (persist) {
         CONF_GET_BOOL(persist, "aof_enabled", conf->aof_enabled, 0);
-        CONF_GET_STR(persist, "aof_path", conf->aof_path, "./kvs.aof");
-        CONF_GET_STR(persist, "rdb_path", conf->rdb_path, "./kvs.rdb");
+        CONF_GET_STR(persist, "aof_path", conf->aof_path, "./kvstore.aof");
+        CONF_GET_STR(persist, "rdb_path", conf->rdb_path, "./dump.rdb");
+        CONF_GET_INT(persist, "aof_fsync_policy", conf->aof_fsync_policy, 2);
     } else {
         conf->aof_enabled = 0;
-        strcpy(conf->aof_path, "./kvs.aof");
-        strcpy(conf->rdb_path, "./kvs.rdb");
+        strcpy(conf->aof_path, "./kvstore.aof");
+        strcpy(conf->rdb_path, "./dump.rdb");
+        conf->aof_fsync_policy = 2;
     }
 
     // 5. 读取 Section: [replication]
     toml_table_t *repl = toml_table_in(root, "replication");
     if (repl) {
-        CONF_GET_STR(repl, "replicaof_ip", conf->replicaof_ip, "");
-        CONF_GET_INT(repl, "replicaof_port", conf->replicaof_port, 6379);
+        CONF_GET_STR(repl, "master_ip", conf->master_ip, "");
+        CONF_GET_INT(repl, "master_port", conf->master_port, 6379);
+        CONF_GET_INT(repl, "max_slave_count", conf->max_slave_count, 512);
     } else {
-        conf->replicaof_ip[0] = '\0'; // 空字符串代表 Master
+        conf->master_ip[0] = '\0'; // 空字符串代表 Master
+    }
+
+    // 6. 读取 Section: [rdma]
+    toml_table_t *rdma = toml_table_in(root, "rdma");
+    if (rdma) {
+        CONF_GET_INT(rdma, "rdma_port", conf->rdma_port, 2001);
+        CONF_GET_INT(rdma, "rdma_max_chunk_size", conf->rdma_max_chunk_size, 1024);
+    } else {
+        conf->rdma_port = 2001;
+        conf->rdma_max_chunk_size = 1024;
     }
 
     // 6. 清理 TOML 内存
@@ -105,9 +123,9 @@ void kvs_config_dump(kvs_config_t *conf) {
     printf("=== Server Configuration ===\n");
     printf("Bind: %s:%d\n", conf->bind_ip, conf->port);
     printf("Log Level: %s\n", conf->log_level);
-    printf("Role: %s\n", conf->replicaof_ip[0] == '\0' ? "Master" : "Slave");
-    if (conf->replicaof_ip[0] != '\0') {
-        printf("Master Host: %s:%d\n", conf->replicaof_ip, conf->replicaof_port);
+    printf("Role: %s\n", conf->master_ip[0] == '\0' ? "Master" : "Slave");
+    if (conf->master_ip[0] != '\0') {
+        printf("Master Host: %s:%d\n", conf->master_ip, conf->master_port);
     }
     printf("AOF: %s (Path: %s)\n", conf->aof_enabled ? "Yes" : "No", conf->aof_path);
     printf("============================\n");

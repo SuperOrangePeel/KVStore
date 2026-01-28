@@ -822,6 +822,7 @@ static kvs_status_t _on_master_online(struct kvs_slave_s *slave, struct kvs_conn
     struct kvs_conn_s *master_conn = (struct kvs_conn_s *)conn;
     struct kvs_my_master_context_s *master_ctx = (struct kvs_my_master_context_s *)conn->user_data;
     master_ctx->processed_sz_cur = 0;
+    
     kvs_server_msg_pump(master_conn, &master_ctx->processed_sz_cur, _kvs_slave_cmd_logic);
 
 }

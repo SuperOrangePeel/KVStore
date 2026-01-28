@@ -126,10 +126,10 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
 
     if(cmd->cmd_type & KVS_CMD_WRITE) {
 
-        if(server->pers_ctx->aof_enabled) {
+        //if(server->pers_ctx->aof_enabled) {
             // append to AOF file
-            kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len);
-        }
+        kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len);
+        //}
         kvs_master_propagate_command_to_slaves(server->master, cmd);
     }
     protocol->format_response(result, cmd->val, cmd->len_val, conn);

@@ -31,7 +31,11 @@ void _kvs_server_aof_timer_cb(void *ctx, int res, int flags) {
         assert(0);
         return;
     }
-    kvs_persistence_flush_aof(server->pers_ctx);
+    //kvs_persistence_flush_aof(server->pers_ctx);
+
+    // todo: Heartbeat for master/slave replication
+
+    // re-add timer
     kvs_loop_add_timeout(&server->loop, &server->aof_timer_ev, &server->aof_ts);
 }
 

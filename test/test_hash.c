@@ -30,22 +30,33 @@ void reverse_string(char* str) {
     }
 }
 
-// 构造 RSET 指令
-int format_rset(char *buf, int i) {
+
+int format_set(char *buf, int i) {
     char key[32], val[64];
     sprintf(key, "key:%07d", i);
     reverse_string(key);
     sprintf(val, "value_content_%07d", i);
-    return sprintf(buf, "*3\r\n$4\r\nRSET\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
+    
+    int ret = sprintf(buf, "*3\r\n$3\r\nSET\r\n$%ld\r\n%s\r\n$%ld\r\n%s\r\n", 
                    strlen(key), key, strlen(val), val);
+    //rintf("format_hset ret:%d\n", ret);
+    return ret;
 }
 
-// 构造 RGET 指令
-int format_rget(char *buf, int i) {
+
+int format_get(char *buf, int i) {
     char key[32];
     sprintf(key, "key:%07d", i);
     reverse_string(key);
-    return sprintf(buf, "*2\r\n$4\r\nRGET\r\n$%ld\r\n%s\r\n", 
+    return sprintf(buf, "*2\r\n$3\r\nGET\r\n$%ld\r\n%s\r\n", 
+                   strlen(key), key);
+}
+
+int format_del(char *buf, int i) {
+    char key[32];
+    sprintf(key, "key:%07d", i);
+    reverse_string(key);
+    return sprintf(buf, "*2\r\n$3\r\nDEL\r\n$%ld\r\n%s\r\n", 
                    strlen(key), key);
 }
 
@@ -80,7 +91,7 @@ void run_test(const char *ip, int port, int mode, int count) {
     int success_count = 0;
     struct timeval start_time, end_time;
 
-    const char* mode_str = (mode == 1 ? "HSET" : "HGET");
+    const char* mode_str = (mode == 1 ? "SET" : (mode == 2 ? "GET" : "DEL"));
 
     printf("Starting %s Test: %d items...\n", mode_str, count);
     gettimeofday(&start_time, NULL);
@@ -88,7 +99,8 @@ void run_test(const char *ip, int port, int mode, int count) {
     while (success_count < count) {
         // 1. 批量发送
         while (sent_count < count && (sent_count - success_count) < BATCH_SIZE) {
-            int len = (mode == 1) ? format_rset(send_buf, sent_count) : format_rget(send_buf, sent_count);
+            int len = (mode == 1) ? format_set(send_buf, sent_count) : 
+                (mode == 2) ? format_get(send_buf, sent_count) : format_del(send_buf, sent_count);
             if (send(sock, send_buf, len, 0) <= 0) break;
             sent_count++;
         }
@@ -109,7 +121,7 @@ void run_test(const char *ip, int port, int mode, int count) {
         }
 
         // 3. 打印进度
-        if (sent_count % 1000000 == 0) {
+        if (sent_count % 500000 == 0) {
             printf("Progress: Sent %d, Confirmed %d\n", sent_count, success_count);
             fflush(stdout);
         }
@@ -129,7 +141,7 @@ void run_test(const char *ip, int port, int mode, int count) {
 
 int main(int argc, char *argv[]) {
     if (argc < 4) {
-        printf("Usage: %s <ip> <port> <mode: 1-HSET, 2-HGET> [count]\n", argv[0]);
+        printf("Usage: %s <ip> <port> <mode: 1-SET, 2-GET, 3-DEL> [count]\n", argv[0]);
         return -1;
     }
     int mode = atoi(argv[3]);

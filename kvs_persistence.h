@@ -3,12 +3,22 @@
 
 #include <stdio.h>
 #include <sys/time.h>
+#include "kvs_event_loop.h"
+#include "kvs_aof_engine.h"
 
 #define AOF_FSYNC_INTERVAL_MS 1000 // 1 second
 #define AOF_MAX_BUFFER_SIZE 4096 // 4KB
 
+typedef enum {
+    KVS_AOF_NO_FSYNC = 0, 
+    KVS_AOF_ALWAYS= 1,
+    KVS_AOF_EVERY_SEC
+} kvs_pers_type_t;
+
 struct kvs_pers_context_s {
+    struct kvs_loop_s *loop;
     int aof_enabled;
+    kvs_pers_type_t aof_fsync_policy;
     int aof_fd;
     char *aof_filename;
     struct timeval last_fsync_time;
@@ -19,10 +29,13 @@ struct kvs_pers_context_s {
     //FILE* rdb_fp;
     char *rdb_filename;
     size_t rdb_size;
+    struct kvs_aof_engine aof_engine;
 };
 
 struct kvs_pers_config_s {
+    struct kvs_loop_s *loop;
     int aof_enabled;
+    kvs_pers_type_t aof_fsync_policy; // 0: every sec, 1: every cmd, 2: no fsync
     char *aof_filename;
     char *rdb_filename;
 };

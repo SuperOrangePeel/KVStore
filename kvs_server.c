@@ -49,6 +49,7 @@ int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *con
 	
 
 	//2. init persistence context
+	config_pt->pers_config.loop = &server->loop;
     server->pers_ctx = kvs_persistence_create(&config_pt->pers_config);
 	kvs_server_init_aof_timer(server);
 
@@ -497,7 +498,8 @@ kvs_status_t kvs_server_aof_recovery(struct kvs_server_s *server, kvs_server_cmd
 	struct stat file_stat;
 	if(stat(server->pers_ctx->aof_filename, &file_stat) != 0){
 		// aof file not exist, skip
-		printf("AOF file not exist, skip AOF recovery.\n");
+		//printf("AOF file not exist, skip AOF recovery.\n");
+		LOG_INFO("AOF file not exist, skip AOF recovery.");
 		return KVS_ERR;
 	}
 
@@ -545,20 +547,20 @@ kvs_status_t kvs_server_storage_recovery(struct kvs_server_s *server) {
 	// 1. load AOF
 	ret = kvs_server_aof_recovery(server, _kvs_server_process_raw_buffer);
 	if(ret != KVS_OK) {
-		printf("AOF recovery failed.\n");
+		//LOG_ERROR("AOF recovery failed.");
 		//return KVS_ERR;
 	} else {
-		printf("AOF recovery completed.\n");
+		LOG_INFO("AOF recovery completed.");
 		return KVS_OK;
 	}
 
 	// 2. load RDB
 	ret = kvs_server_load_rdb(server);
 	if(ret != KVS_OK) {
-		printf("RDB recovery failed.\n");
+		//LOG_ERROR("RDB recovery failed.");
 		//return KVS_ERR;
 	} else {
-		printf("RDB recovery completed.\n");
+		LOG_INFO("RDB recovery completed.");
 		return KVS_OK;
 	}
 	

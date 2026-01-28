@@ -6,7 +6,7 @@
 #include <string.h>
 
 int kvs_loop_init(kvs_loop_t *loop, int entries) {
-    printf("kvs_loop_init: entries=%d\n", entries);
+    //printf("kvs_loop_init: entries=%d\n", entries);
     memset(loop, 0, sizeof(*loop));
     // IORING_SETUP_SQPOLL 可以进一步减少系统调用，但需要 root 权限，暂时不用
     struct io_uring_params params;
@@ -115,6 +115,26 @@ int kvs_loop_add_write(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len,
     return 0;
 }
 
+int kvs_loop_add_writev(kvs_loop_t *loop, kvs_event_t *ev, struct iovec *iovs, int iovcnt, off_t offset) {
+    struct io_uring_sqe *sqe = get_sqe_safe(loop);
+    if (!sqe) return -1;
+
+    io_uring_prep_writev(sqe, ev->fd, iovs, iovcnt, offset);
+    io_uring_sqe_set_data(sqe, ev);
+    return 0;
+}
+
+int kvs_loop_add_write_with_flags(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len, off_t offset, unsigned int flags) {
+    struct io_uring_sqe *sqe = get_sqe_safe(loop);
+    if (!sqe) return -1;
+
+    io_uring_prep_write(sqe, ev->fd, buf, len, offset);
+    sqe->flags |= flags;
+    io_uring_sqe_set_data(sqe, ev);
+    return 0;
+}
+
+
 int kvs_loop_add_send(kvs_loop_t *loop, kvs_event_t *ev, void *buf, size_t len) {
     struct io_uring_sqe *sqe = get_sqe_safe(loop);
     if (!sqe) return -1;
@@ -163,6 +183,17 @@ int kvs_loop_add_fsync(kvs_loop_t *loop, kvs_event_t *ev, int fd) {
     if (!sqe) return -1;
 
     io_uring_prep_fsync(sqe, fd, 0);
+    io_uring_sqe_set_data(sqe, ev);
+    return 0;
+}
+
+
+int kvs_loop_add_fsync_with_flags(kvs_loop_t *loop, kvs_event_t *ev, int fd, unsigned int flags) {
+    struct io_uring_sqe *sqe = get_sqe_safe(loop);
+    if (!sqe) return -1;
+
+    io_uring_prep_fsync(sqe, fd, 0);
+    sqe->flags |= flags;
     io_uring_sqe_set_data(sqe, ev);
     return 0;
 }

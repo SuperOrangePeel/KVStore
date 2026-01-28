@@ -1,5 +1,6 @@
 #include "common.h"
 #include "kvs_mempool.h"
+#include "logger.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -10,7 +11,8 @@ static kvs_mp_pool_t kvs_mem_pool;
 
 void kvs_global_mempool_init() {
 #if KVS_MEM_POOL
-    printf("Memory pool enabled.\n");  
+    //printf("Memory pool enabled.\n");  
+    LOG_INFO("Memory pool enabled.");
     kvs_mempool_create(&kvs_mem_pool);
 #else 
     printf("Memory pool disabled.\n");
