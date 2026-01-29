@@ -61,7 +61,8 @@ kvs_status_t kvs_net_get_free_conn(struct kvs_network_s *net, struct kvs_conn_s 
         return KVS_QUIT;
     }
 
-    int conn_idx = net->free_conn_stack[net->free_conn_stack_top--];
+    int conn_idx = net->free_conn_stack[net->free_conn_stack_top];
+    net->free_conn_stack_top --;
     struct kvs_conn_s *conn = &net->conn_pool[conn_idx];
     *out_conn = conn;
     return KVS_OK;
@@ -85,7 +86,9 @@ kvs_status_t kvs_net_release_conn(struct kvs_network_s *net, struct kvs_conn_s *
     }
 
     int conn_idx = _kvs_net_get_conn_idx(net, conn);
-    net->free_conn_stack[++net->free_conn_stack_top] = conn_idx;
+    net->free_conn_stack_top ++;
+    net->free_conn_stack[net->free_conn_stack_top] = conn_idx;
+    if(net)
     return KVS_OK;
 }
 
@@ -352,6 +355,7 @@ kvs_status_t kvs_net_init(struct kvs_network_s  *net, struct kvs_network_config_
     net->free_conn_stack_top = net->max_conns - 1;
     for(int i=0; i<net->max_conns; i++) {
         net->free_conn_stack[i] = net->max_conns - 1 - i;
+        net->conn_pool[i]._internal.fd = -1; // 初始化为无效值
     }
 
     net->read_buffer_size = conf->read_buffer_size > 0 ? conf->read_buffer_size : KVS_READ_BUF_SZ_DEFAULT;
@@ -388,6 +392,17 @@ kvs_status_t kvs_net_deinit(struct kvs_network_s  *net) {
         close(net->server_fd);
         net->server_fd = -1;
     }
+    for(int i = 0; i < net->max_conns; i++) {
+        struct kvs_conn_s *conn = &net->conn_pool[i];
+        if(conn->_internal.fd > 0 && !conn->_internal.is_closed) {
+            // 关闭连接
+            close(conn->_internal.fd);
+            _kvs_net_deinit_conn(net, conn);
+            kvs_net_release_conn(net, conn);
+        }
+        _kvs_net_destroy_buffer(net, conn);
+    }
+
     //kvs_loop_deinit(net->loop);
     kvs_free(net->conn_pool, sizeof(struct kvs_conn_s) * net->max_conns);
     net->conn_pool = NULL;

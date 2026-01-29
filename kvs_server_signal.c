@@ -37,7 +37,7 @@ static void _kvs_server_check_child_exit(struct kvs_server_s *server) {
                 kvs_server_on_rdb_save_finish(server, KVS_OK);
                 
             } else {
-                LOG_WARN("Background RDB failed.");
+                LOG_WARN("Background RDB failed. exit status: %d, exit signal: %d", WEXITSTATUS(statloc), WTERMSIG(statloc));
                 assert(0);
                 kvs_server_on_rdb_save_finish(server, KVS_ERR);
             }

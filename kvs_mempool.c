@@ -63,6 +63,7 @@ void kvs_mempool_create(kvs_mp_pool_t *pool) {
 
 
 void kvs_mempool_destroy(kvs_mp_pool_t *pool) {
+
     // kvs_mp_large_node_t *large = pool->large;
     // kvs_mp_large_node_t *tmp_large;
     // while (large) {

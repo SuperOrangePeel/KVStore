@@ -257,13 +257,15 @@ int kvs_persistence_destroy(struct kvs_pers_context_s *ctx) {
         close(ctx->aof_fd);
         ctx->aof_fd = -1;
     }
+    kvs_aof_destroy(&ctx->aof_engine);
+
     kvs_free(ctx->aof_filename, strlen(ctx->aof_filename) + 1);
     ctx->aof_filename = NULL;
     kvs_free(ctx->rdb_filename, strlen(ctx->rdb_filename) + 1);
     ctx->rdb_filename = NULL;
     kvs_free(ctx, sizeof(struct kvs_pers_context_s));
 
-    kvs_aof_destroy(&ctx->aof_engine);
+   
     return 0;
 }
 

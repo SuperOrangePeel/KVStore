@@ -765,6 +765,7 @@ static kvs_status_t _on_rdma_sent_rdb_loaded_ack(struct kvs_slave_s *slave, stru
         LOG_FATAL("invalid trigger: %d", trigger);
         return KVS_ERR;
     }
+    //if(conn->type == KVS_CONN_RDMA) 
     if(conn->type != KVS_CONN_TCP || conn->user_data == NULL || slave == NULL) {
         LOG_FATAL("invalid conn type: %d or conn->user_data == NULL is %d or slave == NULL is %d", conn->type, conn->user_data == NULL, slave == NULL);
         return KVS_ERR;
@@ -786,7 +787,7 @@ static kvs_status_t _on_rdma_sent_rdb_loaded_ack(struct kvs_slave_s *slave, stru
     return KVS_OK;
 }
 
-static kvs_status_t _kvs_slave_cmd_logic(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
+kvs_status_t _kvs_slave_cmd_logic(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
     if(server == NULL || cmd == NULL || conn == NULL) {
         LOG_FATAL("server == NULL is %d, cmd == NULL is %d, conn == NULL is %d", server == NULL, cmd == NULL, conn == NULL);
         return KVS_ERR;

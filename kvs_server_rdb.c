@@ -178,11 +178,13 @@ static int flush_buffer(struct _kvs_rdb_db_filter_arg *arg, int buf_idx, int for
 
         // 执行写入
         if (pwrite(arg->fd, buf->data, aligned_len, arg->file_offset) < 0) {
+            LOG_ERROR("Failed to write final RDB buffer: %s", strerror(errno));
             return -1;
         }
 
         // 【关键】截断文件：这是去除末尾 0 填充的唯一工业级手段
         if (ftruncate(arg->fd, arg->file_offset + buf->pos) < 0) {
+            LOG_ERROR("Failed to ftruncate RDB file: %s", strerror(errno));
             return -1;
         }
         
@@ -219,6 +221,7 @@ int _kvs_rdb_db_filter(char *key, int len_key, char *value, int len_val, void* a
         int prev_idx = 1 - ctx->cur_buf_idx;
         if (ctx->bufs[prev_idx].is_flushing) {
             if (wait_for_io(ctx->ring) < 0) {
+                LOG_ERROR("Failed to wait for RDB IO completion: %s", strerror(errno));
                 ctx->ret = -1;
                 return -1;
             }
@@ -228,6 +231,7 @@ int _kvs_rdb_db_filter(char *key, int len_key, char *value, int len_val, void* a
 
         // 2. 异步刷当前 Buffer (它是满的，4MB，对齐)
         if (flush_buffer(ctx, ctx->cur_buf_idx, 0) < 0) {
+            LOG_ERROR("Failed to flush RDB buffer: %s", strerror(errno));
             ctx->ret = -1;
             return -1;
         }
@@ -255,7 +259,10 @@ int kvs_rdb_child_process(struct kvs_server_s *server) {
     struct io_uring ring;
     int ret = 0;
     
-    if (io_uring_queue_init(4, &ring, 0) < 0) return -1;
+    if (io_uring_queue_init(4, &ring, 0) < 0) {
+        LOG_ERROR("io_uring_queue_init failed");
+        return -1;
+    }
 
     char rdb_temp_filename[64];
     snprintf(rdb_temp_filename, sizeof(rdb_temp_filename), "dump_%d.rdb", getpid());
@@ -300,6 +307,7 @@ int kvs_rdb_child_process(struct kvs_server_s *server) {
         
         // 2. 刷入当前最后残留的 buffer (非对齐刷盘 + ftruncate)
         if (flush_buffer(&arg, arg.cur_buf_idx, 1) < 0) {
+            LOG_ERROR("Failed to flush final RDB buffer: %s", strerror(errno));
             arg.ret = -1;
         }
     }
@@ -310,6 +318,7 @@ int kvs_rdb_child_process(struct kvs_server_s *server) {
     if (arg.ret == 0) {
         rename(rdb_temp_filename, server->pers_ctx->rdb_filename);
     } else {
+        LOG_ERROR("RDB save failed, removing temp file");
         unlink(rdb_temp_filename);
     }
 

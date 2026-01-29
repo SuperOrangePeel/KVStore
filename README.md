@@ -3,6 +3,7 @@
 ```shell
 git clone https://github.com/cktan/tomlc99.git deps/tomlc99
 git clone https://github.com/wangbojing/NtyCo.git deps/ntyco
+git clone 
 
 make
 
@@ -112,21 +113,26 @@ Actual QPS:     1963904.23
 ```
 
 
-### iouring异步
+## 主从同步
+### RDMA
+分布式 KV 在主从全量同步时，TB 级的 RDB 文件传输会导致严重的 CPU 占用和网络 IO 瓶颈，传统 TCP 模式下内核态与用户态的多次拷贝显著增加了同步时长。
 
-1. iouring在内核中是并行执行的
+KVstore实现了一种高性能、零拷贝的 RDB 传输机制，并解决了 RDMA 在高速传输中极易触发的 RNR (Receiver Not Ready) 硬件错误。
+
+基于 RDMA CMA/Verbs 开发了纯异步传输引擎，利用 Zero-Copy 绕过内核协议栈。
+设计并实现了一套基于信用的反压机制 (Backpressure)。Slave 动态向 Master 授权“信用额度（Buffer 数量）”，Master 严格按额度发送。
+有效解决了RNR错误的发生
+
+### EBPF
+```shell
+$ git clone 
 
 
+$ python3 ./epbf/monitor_server.py
 
-README 电脑各项配置信息、虚拟机的系统版本 编译步骤，测试方案与可行性，性能数据
-
-实现配置文件，包含端口ip，日志级别，持久化方案，主从同步 等的配置，在配置文件中配置
-
-aof、rdb文件落盘用io_uring,加载持久化文件用mmap
-
-主从同步用ebpf
-
-发rdb文件，调研rdma实现。
+$ sudo ./kvs_monitor <PID> m 0 2000 127.0.0.1 9090
+$ sudo ./kvs_monitor <PID> s 0 2004 127.0.0.1 9090
+```
 
 
 ### 面试题
@@ -140,3 +146,16 @@ aof、rdb文件落盘用io_uring,加载持久化文件用mmap
 8. 测试用例如何实现？并且保证代码覆盖率超过90%
 9. 网络并发量如何？qps如何？
 10. 能够跟哪些系统交互使用？
+
+
+
+
+README 电脑各项配置信息、虚拟机的系统版本 编译步骤，测试方案与可行性，性能数据
+
+实现配置文件，包含端口ip，日志级别，持久化方案，主从同步 等的配置，在配置文件中配置
+
+aof、rdb文件落盘用io_uring,加载持久化文件用mmap
+
+主从同步用ebpf
+
+发rdb文件，调研rdma实现。

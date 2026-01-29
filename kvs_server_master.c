@@ -630,7 +630,7 @@ static kvs_status_t _on_rdma_recv_ready(struct kvs_master_s *master, struct kvs_
 
 
 // rdma_send rdb handler
-static kvs_status_t _on_rdb_sent(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
+kvs_status_t _on_rdb_sent(struct kvs_master_s *master, struct kvs_conn_header_s *conn, kvs_event_trigger_t trigger) {
     
     // 1. 错误处理
     // if(trigger != KVS_EVENT_CONTINUE && trigger != KVS_EVENT_WRITE_DONE) {
@@ -852,7 +852,7 @@ kvs_status_t _on_slave_rdb_loaded_ack(struct kvs_master_s *master, struct kvs_co
         return KVS_ERR;
     }
     slave_ctx->processed_sz_cur = sizeof("+RDBLOADED\r\n") - 1;
-    LOG_DEBUG("Received RDB LOADED ACK from slave idx %d, msg:[%s]", slave_ctx->slave_idx, slave_conn->r_buffer);
+    //LOG_DEBUG("Received RDB LOADED ACK from slave idx %d, msg:[%s]", slave_ctx->slave_idx, slave_conn->r_buffer);
 
     _kvs_master_free_rdma_resources_for_slave(master, slave_ctx);
     // rdb事件已经结束，关闭RDMA连接

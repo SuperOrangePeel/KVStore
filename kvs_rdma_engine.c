@@ -421,7 +421,7 @@ void _rdma_wc_handler(void *ctx, int res, int flags){
         LOG_ERROR("rdma_event_handler error: %s (code: %d)", strerror(-res), res);
         return;
     }
-    LOG_INFO("RDMA work completion handler invoked.");
+    //LOG_INFO("RDMA work completion handler invoked.");
     struct ibv_cq *cq;
     void *ctx_wc = NULL;
     struct ibv_wc wc[10];
