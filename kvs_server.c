@@ -385,7 +385,7 @@ kvs_status_t kvs_server_create_conn_ctx(struct kvs_server_s *server, struct kvs_
 				conn->user_data = (void*)slave_ctx;
 
 				slave_ctx->rdma_recv_buffer_count = server->master->rdma_recv_buffer_count;
-				LOG_INFO("created slave_ctx, ref_count: %d", slave_ctx->ref_count);
+				LOG_DEBUG("created slave_ctx, ref_count: %d", slave_ctx->ref_count);
 			}
 			break;
 		case KVS_CTX_MASTER_OF_ME:{

@@ -142,7 +142,7 @@ static kvs_status_t _on_slave_none(struct kvs_master_s *master, struct kvs_conn_
     // 3. 状态转换
     slave_ctx->state = KVS_MY_SLAVE_WAIT_BGSAVE_END;
     struct kvs_conn_s *slave_conn = (struct kvs_conn_s *)conn;
-    LOG_INFO("Slave fd %d entered SYNC state, waiting for BGSAVE to complete", slave_conn->_internal.fd);
+    LOG_DEBUG("Slave fd %d entered SYNC state, waiting for BGSAVE to complete", slave_conn->_internal.fd);
 
 
     // 4. 注册事件
@@ -385,7 +385,7 @@ static kvs_status_t _on_bgsave_end(struct kvs_master_s *master, struct kvs_conn_
 
     //3. 状态转换
     slave_ctx->state = KVS_MY_SLAVE_WAIT_SENT_RDMA_INFO;
-    LOG_INFO("Slave fd %d BGSAVE completed, wait for RDMA info sent", slave_conn->_internal.fd);
+    LOG_DEBUG("Slave fd %d BGSAVE completed, wait for RDMA info sent", slave_conn->_internal.fd);
 
 
     //4. 注册事件
@@ -408,6 +408,12 @@ static kvs_status_t _on_bgsave_end(struct kvs_master_s *master, struct kvs_conn_
     conn_tcp->s_idx += len;
 
     kvs_net_set_send_event_manual(conn_tcp);
+
+    if(size == 0) {
+        LOG_DEBUG("RDB size is 0, no need to send RDB via RDMA");
+        slave_ctx->state = KVS_MY_SLAVE_WAIT_BACKLOG_SENT;
+        return KVS_STATUS_CONTINUE; // skip RDMA sending, go to backlog directly
+    }
     
     return KVS_OK;
 }
@@ -908,7 +914,7 @@ kvs_status_t _on_backlog_sent(struct kvs_master_s *master, struct kvs_conn_heade
     }
     
     size_t *repl_backlog_offset = &slave_ctx->repl_backlog_offset;
-    assert(tcp_conn->s_idx == 0);
+    //assert(tcp_conn->s_idx == 0);
     int to_send = master->repl_backlog_idx - *repl_backlog_offset;
     
     if(to_send > tcp_conn->s_buf_sz) {
@@ -926,7 +932,7 @@ kvs_status_t _on_backlog_sent(struct kvs_master_s *master, struct kvs_conn_heade
 
        
         *repl_backlog_offset = 0;
-        assert(tcp_conn->s_idx == 0);
+        //assert(tcp_conn->s_idx == 0);
         // 4. 注册事件 recv接收客户端命令
         kvs_net_set_recv_event(tcp_conn); 
         return KVS_OK; // done

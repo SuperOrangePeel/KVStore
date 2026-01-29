@@ -376,7 +376,7 @@ int _kvs_server_rdb_conn_cb(struct kvs_conn_s *conn, void* arg) {
         {
             struct kvs_my_slave_context_s *slave_ctx = (struct kvs_my_slave_context_s*)conn->header.user_data;
             if(slave_ctx->state == KVS_MY_SLAVE_WAIT_BGSAVE_END) {
-                LOG_INFO("Notifying slave fd %d to start RDB transfer", conn->_internal.fd);
+                LOG_DEBUG("Notifying slave fd %d to start RDB transfer", conn->_internal.fd);
                 kvs_master_slave_state_machine_tick(server->master, conn, KVS_EVENT_BGSAVE_DONE);
             }
             break;

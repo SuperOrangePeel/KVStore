@@ -2,8 +2,8 @@
 ## run
 ```shell
 git clone https://github.com/cktan/tomlc99.git deps/tomlc99
-git clone https://github.com/wangbojing/NtyCo.git deps/ntyco
-git clone 
+git clone https://github.com/wangbojing/NtyCo.git deps/NtyCo
+mkdir test_slave
 
 make
 
@@ -11,6 +11,8 @@ sudo modprobe siw
 sudo rdma link add siw0 type siw netdev <网卡名>
 
 ./kvstore ./kvs.toml
+cd test_slave
+
 ```
 
 ## 架构
@@ -126,15 +128,19 @@ KVstore实现了一种高性能、零拷贝的 RDB 传输机制，并解决了 R
 ### EBPF
 使用ebpf监测主从增量同步的进度
 ```shell
-$ git clone https://github.com/libbpf/libbpf-bootstrap.git
+$ git clone --recursive https://github.com/libbpf/libbpf-bootstrap.git
 $ cp ./ebpf/kvs* ./libbpf-bootstrap/examples/c/
+$ cd ./libbpf-bootstrap/examples/c/
 # 在./libbpf-bootstrap/examples/c/makefile的APPS中加上kvs_monitor
 $ make kvs_monitor
+$ cd ../../../
 
 $ python3 ./ebpf/monitor_server.py
+$ make restore
 $ ./kvstore
-$ sudo ./kvs_monitor <PID> m 0 2000 127.0.0.1 9090
 $ ./test_slave/kvstore
+$ cd  ./libbpf-bootstrap/examples/c/
+$ sudo ./kvs_monitor <PID> m 0 2000 127.0.0.1 9090
 $ sudo ./kvs_monitor <PID> s 0 2004 127.0.0.1 9090
 $ ./test/test_hash <ip> <port> 1 500000
 ```

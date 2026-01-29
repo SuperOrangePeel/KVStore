@@ -390,6 +390,10 @@ static kvs_status_t _on_sync_response(struct kvs_slave_s *slave, struct kvs_conn
     //_kvs_slave_get_rdma_info(slave, &rdma_port, &token, &rdb_size);
     int processed_len = _kvs_slave_get_rdma_info_raw_buffer(master_conn->r_buffer, master_conn->r_idx, &rdma_port, &token, &rdb_size);
     master_ctx->processed_sz_cur = processed_len;
+    if(rdb_size == 0) {
+        master_ctx->state = KVS_MY_MASTER_ONLINE;
+        return KVS_OK; // no RDB to sync, go online directly
+    }
     //_kvs_slave_rdma_connect_master(slave, rdma_port, token, rdb_size);
     
     LOG_DEBUG("RDMA port: %d, token: %lu, RDB size: %zu", rdma_port, token, rdb_size);

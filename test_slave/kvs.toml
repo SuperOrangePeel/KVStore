@@ -1,0 +1,36 @@
+# KVS Server Configuration
+
+[server]
+# 需要支持rdma的网卡ip
+bind_ip = "172.16.135.130"
+port = 2004
+# repl_backlog_size = 1048576
+# io_uring_entries = 1024
+
+# max_tcp_connections = 1024
+# tcp_recv_buf_size = 1048576
+# tcp_send_buf_size = 1048576
+
+# debug, info, warn, error
+# log_level = "debug" 
+log_level = "info"
+
+
+[persistence]
+aof_enabled = false
+aof_path = "kvstore.aof"
+rdb_path = "dump.rdb"
+# 0: no, 1: always, 2: everysec
+aof_fsync_policy = 1
+
+[replication]
+# 如果是 Slave，取消注释下面两行
+master_ip = "172.16.135.130"
+master_port = 2000
+# 如果是 Master，取消注释下面一行
+max_slave_count = 512
+
+
+[rdma]
+rdma_port = 2001
+rdma_max_chunk_size = 1024
