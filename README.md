@@ -2,8 +2,8 @@
 ## run
 ```shell
 git clone https://github.com/cktan/tomlc99.git deps/tomlc99
-git clone https://github.com/wangbojing/NtyCo.git deps/ntyco
-git clone 
+git clone https://github.com/wangbojing/NtyCo.git deps/NtyCo
+mkdir test_slave
 
 make
 
@@ -11,6 +11,8 @@ sudo modprobe siw
 sudo rdma link add siw0 type siw netdev <网卡名>
 
 ./kvstore ./kvs.toml
+cd test_slave
+
 ```
 
 ## 架构
