@@ -12,8 +12,8 @@ port = 2000
 # tcp_send_buf_size = 1048576
 
 # debug, info, warn, error
-log_level = "debug" 
-# log_level = "info"
+# log_level = "debug" 
+log_level = "info"
 
 
 [persistence]

@@ -124,16 +124,21 @@ KVstore实现了一种高性能、零拷贝的 RDB 传输机制，并解决了 R
 有效解决了RNR错误的发生
 
 ### EBPF
+使用ebpf监测主从增量同步的进度
 ```shell
-$ git clone 
+$ git clone https://github.com/libbpf/libbpf-bootstrap.git
+$ cp ./ebpf/kvs* ./libbpf-bootstrap/examples/c/
+# 在./libbpf-bootstrap/examples/c/makefile的APPS中加上kvs_monitor
+$ make kvs_monitor
 
-
-$ python3 ./epbf/monitor_server.py
-
+$ python3 ./ebpf/monitor_server.py
+$ ./kvstore
 $ sudo ./kvs_monitor <PID> m 0 2000 127.0.0.1 9090
+$ ./test_slave/kvstore
 $ sudo ./kvs_monitor <PID> s 0 2004 127.0.0.1 9090
+$ ./test/test_hash <ip> <port> 1 500000
 ```
-
+![image](./images/MONITOR.png)
 
 ### 面试题
 1. 为什么会实现kvstore，使用场景在哪里？

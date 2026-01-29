@@ -220,8 +220,9 @@ int _kvs_rdb_db_filter(char *key, int len_key, char *value, int len_val, void* a
         // 1. 确保另一个 buffer 已经写完（背压控制）
         int prev_idx = 1 - ctx->cur_buf_idx;
         if (ctx->bufs[prev_idx].is_flushing) {
-            if (wait_for_io(ctx->ring) < 0) {
-                LOG_ERROR("Failed to wait for RDB IO completion: %s", strerror(errno));
+            int ret = wait_for_io(ctx->ring);
+            if (ret < 0) {
+                LOG_ERROR("Failed to wait for RDB IO completion: %s", strerror(-ret));
                 ctx->ret = -1;
                 return -1;
             }
@@ -268,7 +269,7 @@ int kvs_rdb_child_process(struct kvs_server_s *server) {
     snprintf(rdb_temp_filename, sizeof(rdb_temp_filename), "dump_%d.rdb", getpid());
 
     // 使用 O_DIRECT 打开
-    int fd = open(rdb_temp_filename, O_WRONLY | O_CREAT | O_TRUNC | O_DIRECT, 0644);
+    int fd = open(rdb_temp_filename, O_WRONLY | O_CREAT | O_TRUNC /*| O_DIRECT*/, 0644);
     if (fd < 0) {
         io_uring_queue_exit(&ring);
         LOG_FATAL("Failed to open RDB temp file with O_DIRECT: %s", strerror(errno));
@@ -302,7 +303,11 @@ int kvs_rdb_child_process(struct kvs_server_s *server) {
         // 1. 等待最后一个异步任务完成
         int other_idx = 1 - arg.cur_buf_idx;
         if (bufs[other_idx].is_flushing) {
-            wait_for_io(&ring);
+            int ret = wait_for_io(&ring);
+            if (ret < 0) {
+                LOG_ERROR("Failed to wait for RDB IO completion: %s", strerror(-ret));
+                arg.ret = -1;
+            }
         }
         
         // 2. 刷入当前最后残留的 buffer (非对齐刷盘 + ftruncate)
