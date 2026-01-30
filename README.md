@@ -3,7 +3,6 @@
 ```shell
 git clone https://github.com/cktan/tomlc99.git deps/tomlc99
 git clone https://github.com/wangbojing/NtyCo.git deps/NtyCo
-mkdir test_slave
 
 make
 
