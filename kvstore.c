@@ -115,7 +115,7 @@ int main(int argc, char *argv[]) {
     kvs_rdma_init_engine(&global_server.rdma_engine, &global_server.loop, &rdma_conf);
 
     //kvs_proactor_init(&proactor, &proactor_options);
-    size_t rdma_max_chunk_size = 1024 ; // 60KB
+    //size_t rdma_max_chunk_size = 1024 ; // 60KB
     int rdma_reponse_buf_size = 512; // 512B
     size_t rdma_recv_buf_count = 4; // 4 buffers for receiving RDB data
 
@@ -141,7 +141,7 @@ int main(int argc, char *argv[]) {
         .protocol.execute_command = kvs_executor_cmd,
         .protocol.format_response = kvs_format_response,
         .use_rdma = 1,
-        .rdma_max_chunk_size = rdma_max_chunk_size, 
+        .rdma_max_chunk_size = config.rdma_max_chunk_size, 
     };
 
     if(config.master_ip[0] == '\0') {

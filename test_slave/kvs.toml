@@ -3,7 +3,7 @@
 [server]
 # 需要支持rdma的网卡ip
 bind_ip = "172.16.135.130"
-port = 2000
+port = 2004
 # repl_backlog_size = 1048576
 # io_uring_entries = 1024
 
@@ -12,12 +12,12 @@ port = 2000
 # tcp_send_buf_size = 1048576
 
 # debug, info, warn, error
-# log_level = "debug" 
-log_level = "info"
+log_level = "debug" 
+# log_level = "info"
 
 
 [persistence]
-aof_enabled = true
+aof_enabled = false
 aof_path = "kvstore.aof"
 rdb_path = "dump.rdb"
 # 0: no, 1: always, 2: everysec
@@ -33,4 +33,4 @@ max_slave_count = 512
 
 [rdma]
 rdma_port = 2001
-rdma_max_chunk_size = 1024
+rdma_max_chunk_size = 62914560

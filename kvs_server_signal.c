@@ -61,12 +61,12 @@ void kvs_server_on_signal(void *ctx, int res, int flags) {
     switch (fdsi->ssi_signo) {
         case SIGINT:
         case SIGTERM:
-            LOG_INFO("Received SHUTDOWN signal, exiting...");
+            LOG_DEBUG("Received SHUTDOWN signal, exiting...");
             server->loop.stop = 1; // 让主循环退出
             break;
 
         case SIGCHLD:
-            LOG_INFO("Received SIGCHLD, child process exited.");
+            LOG_DEBUG("Received SIGCHLD, child process exited.");
             // 核心逻辑：去检查是不是 RDB 子进程挂了
             _kvs_server_check_child_exit(server); 
             break;

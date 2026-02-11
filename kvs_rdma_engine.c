@@ -467,6 +467,9 @@ void _rdma_wc_handler(void *ctx, int res, int flags){
                 if(cur_wc->status == IBV_WC_SUCCESS) {
                     //LOG_DEBUG("RDMA work completed successfully for wr_id: %lu\n", cur_wc->wr_id);
                 } else {
+                    // if(cur_wc->status == IBV_WC_WR_FLUSH_ERR) {
+                    //     continue; // ignore flush error
+                    // }
                     LOG_ERROR("RDMA work completion error for wr_id: %lu, status: %s (code: %d)", 
                         cur_wc->wr_id, ibv_wc_status_str((enum ibv_wc_status)cur_wc->status), cur_wc->status);
                         continue;

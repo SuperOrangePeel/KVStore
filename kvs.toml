@@ -33,4 +33,4 @@ max_slave_count = 512
 
 [rdma]
 rdma_port = 2001
-rdma_max_chunk_size = 1024
+rdma_max_chunk_size = 62914560

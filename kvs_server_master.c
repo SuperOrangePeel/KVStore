@@ -142,7 +142,7 @@ static kvs_status_t _on_slave_none(struct kvs_master_s *master, struct kvs_conn_
     // 3. 状态转换
     slave_ctx->state = KVS_MY_SLAVE_WAIT_BGSAVE_END;
     struct kvs_conn_s *slave_conn = (struct kvs_conn_s *)conn;
-    LOG_INFO("Slave fd %d entered SYNC state, waiting for BGSAVE to complete", slave_conn->_internal.fd);
+    LOG_DEBUG("Slave fd %d entered SYNC state, waiting for BGSAVE to complete", slave_conn->_internal.fd);
 
 
     // 4. 注册事件
@@ -385,7 +385,7 @@ static kvs_status_t _on_bgsave_end(struct kvs_master_s *master, struct kvs_conn_
 
     //3. 状态转换
     slave_ctx->state = KVS_MY_SLAVE_WAIT_SENT_RDMA_INFO;
-    LOG_INFO("Slave fd %d BGSAVE completed, wait for RDMA info sent", slave_conn->_internal.fd);
+    LOG_DEBUG("Slave fd %d BGSAVE completed, wait for RDMA info sent", slave_conn->_internal.fd);
 
 
     //4. 注册事件
