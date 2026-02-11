@@ -803,7 +803,7 @@ kvs_status_t _kvs_slave_cmd_logic(struct kvs_server_s *server, struct kvs_handle
         return KVS_ERR;
     }
     //if(cmd->cmd_type == KVS_CMD_READ)
-    LOG_DEBUG("Received replication command from master: %.*s", (int)cmd->len_cmd, cmd->cmd);
+    //LOG_DEBUG("Received replication command from master: %.*s", (int)cmd->len_cmd, cmd->cmd);
     // process command
     kvs_result_t result = protocol->execute_command(server, cmd, conn);
     
@@ -822,7 +822,7 @@ static kvs_status_t _on_master_online(struct kvs_slave_s *slave, struct kvs_conn
         return KVS_ERR;
     }
 
-    LOG_DEBUG("starting to receive replication commands from master.");
+    //LOG_DEBUG("starting to receive replication commands from master.");
 
     struct kvs_conn_s *master_conn = (struct kvs_conn_s *)conn;
     struct kvs_my_master_context_s *master_ctx = (struct kvs_my_master_context_s *)conn->user_data;

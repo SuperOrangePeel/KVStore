@@ -1,0 +1,6 @@
+[submodule "deps/tomlc99"]
+	path = deps/tomlc99
+	url = https://github.com/cktan/tomlc99.git
+[submodule "deps/NtyCo"]
+	path = deps/NtyCo
+	url = https://github.com/wangbojing/NtyCo.git
