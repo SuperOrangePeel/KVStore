@@ -1,0 +1,18 @@
+*.o
+NtyCo/
+kvstore
+testcase
+4. 设计模式.md
+testcase_redis
+kvs_aof.aof
+perf.data*
+.vscode/
+kvstore.aof
+test_slave/dump.rdb
+dump.rdb
+kvstore.aof.bk
+slave.pcap
+master.pcap
+my_capture.pcap
+compile_commands.json
+.cache
