@@ -883,7 +883,7 @@ kvs_status_t kvs_slave_master_state_machine_tick(struct kvs_slave_s *slave, stru
     kvs_status_t ret;
 
     do {
-        LOG_DEBUG("Master state machine tick, current state: %d, trigger: %d", master_ctx->state, trigger);
+        //LOG_DEBUG("Master state machine tick, current state: %d, trigger: %d", master_ctx->state, trigger);
         kvs_my_master_state_t state = master_ctx->state;
         ret = kvs_repl_master_state_handlers[state](slave, conn, trigger);
         if(ret == KVS_ERR) {
@@ -994,7 +994,7 @@ kvs_status_t _my_master_cmd_logic(struct kvs_conn_s *conn, struct kvs_handler_cm
 kvs_status_t kvs_my_master_on_recv(struct kvs_conn_s *conn, int *read_size) {
     
     struct kvs_conn_s *master_conn = (struct kvs_conn_s *)conn;
-    LOG_DEBUG("Received data from Master fd %d, recv size:%d", master_conn->_internal.fd, master_conn->r_idx);
+    //LOG_DEBUG("Received data from Master fd %d, recv size:%d", master_conn->_internal.fd, master_conn->r_idx);
     struct kvs_server_s *server = (struct kvs_server_s *)conn->server_ctx;
     struct kvs_my_master_context_s *master_ctx = (struct kvs_my_master_context_s *)master_conn->header.user_data;
     if(master_ctx == NULL) {

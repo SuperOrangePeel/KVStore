@@ -17,7 +17,7 @@ log_level = "info"
 
 
 [persistence]
-aof_enabled = true
+aof_enabled = false
 aof_path = "kvstore.aof"
 rdb_path = "dump.rdb"
 # 0: no, 1: always, 2: everysec

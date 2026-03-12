@@ -59,7 +59,7 @@ SET: 228592.34 requests per second, p50=0.119 msec
 
 ```shell
 $ sudo perf record  -p 681498 -g -- sleep 10
-$ ./test/test_hash 127.0.0.1 2000 1 50000000
+$ ./test/test_hash 127.0.0.1 2000 1 5000000
 
 +   27.86%    14.08%  kvstore  kvstore            [.] kvs_hash_resp_set                                           
 +   11.80%    11.77%  kvstore  [kernel.kallsyms]  [k] __wake_up    
@@ -67,7 +67,7 @@ $ ./test/test_hash 127.0.0.1 2000 1 50000000
 业务代码本身只占27.86%CPU时间
 
 ```shell
-$ ./test/test_hash 127.0.0.1 2000 1 50000000
+$ ./test/test_hash 127.0.0.1 2000 1 5000000
 
 --- HSET Results ---
 Total Time:     2.526 seconds
@@ -134,9 +134,6 @@ $ make kvs_monitor
 $ cd ../../../
 
 $ python3 ./ebpf/monitor_server.py
-$ make restore
-$ ./kvstore
-$ ./test_slave/kvstore
 $ cd  ./libbpf-bootstrap/examples/c/
 $ sudo ./kvs_monitor <PID> m 0 2000 127.0.0.1 9090
 $ sudo ./kvs_monitor <PID> s 0 2004 127.0.0.1 9090
