@@ -125,13 +125,26 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
     // }
 
     if(cmd->cmd_type & KVS_CMD_WRITE) {
-
+        
+        server->write_command_count ++ ;
         //if(server->pers_ctx->aof_enabled) {
             // append to AOF file
         kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len);
         //}
         kvs_master_propagate_command_to_slaves(server->master, cmd);
     }
+    if(server->pers_ctx->rdb_policy > 0 && server->write_command_count >= server->pers_ctx->rdb_policy && server->rdb_child_pid <= 0) {
+        // trigger RDB save
+        LOG_DEBUG("write_command_count %d reached rdb_policy %d, trigger RDB save", server->write_command_count, server->pers_ctx->rdb_policy);
+        //kvs_server_trigger_bgsave(server);
+        if(server->rdb_child_pid > 0) {
+            LOG_DEBUG("RDB save already in progress, skip this trigger");
+            return KVS_OK;
+        }
+        kvs_server_save_rdb_fork(server);
+        server->write_command_count = 0; // reset counter
+    }
+
     protocol->format_response(result, cmd->val, cmd->len_val, conn);
 
     return KVS_OK;

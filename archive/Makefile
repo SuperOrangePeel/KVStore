@@ -1,6 +1,6 @@
 
 CC = gcc
-FLAGS = -I ./deps/NtyCo/core/ -L ./deps/NtyCo/ -lntyco -lpthread -luring -ldl -g -O0  -I deps/tomlc99 -lrdmacm -libverbs -Wall -Wextra # -fsanitize=address# -ljemalloc
+FLAGS = -I ./deps/NtyCo/core/ -L ./deps/NtyCo/ -lntyco -lpthread -luring -ldl -g -O3  -I deps/tomlc99 -lrdmacm -libverbs -Wall -Wextra # -fsanitize=address# -ljemalloc
 SRCS = $(wildcard *.c) deps/tomlc99/toml.c
 TARGET = kvstore
 SUBDIRS = ./deps/NtyCo ./test ./deps/tomlc99

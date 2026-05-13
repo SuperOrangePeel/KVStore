@@ -7,6 +7,7 @@
 // 默认值定义
 #define KVS_DEFAULT_PORT 6379
 #define KVS_DEFAULT_BACKLOG 512
+#define KVS_DEFAULT_TCP_CONNECTIONS 1024
 #define KVS_DEFAULT_IO_URING_ENTRIES 4096
 #define KVS_DEFAULT_LOG_LEVEL "info"
 
@@ -31,6 +32,7 @@ typedef struct {
 
     //int rdb_compression;
     char rdb_path[256];
+    int rdb_policy;
 
     // --- 主从复制 ---
     // 如果 master_ip 不为空，则是 Slave

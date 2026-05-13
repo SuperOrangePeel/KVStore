@@ -336,6 +336,7 @@ int kvs_rdb_child_process(struct kvs_server_s *server) {
 
 kvs_status_t kvs_server_save_rdb_fork(struct kvs_server_s *server) {
     pid_t pid = fork();
+    server->rdb_child_pid = -1; // reset before fork
     if (pid < 0) {
         LOG_FATAL("fork rdb process failed: %s", strerror(errno));
         assert(0);
@@ -403,6 +404,8 @@ int kvs_server_on_rdb_save_finish(struct kvs_server_s *server, kvs_status_t stat
         // 如果失败了，可能需要断开所有等待的 Slave，或者重试
         return KVS_ERR;
     }
+
+    server->rdb_child_pid = -1; // reset child pid
 
 
     char *rdb_path = server->pers_ctx->rdb_filename;

@@ -354,6 +354,7 @@ struct kvs_server_s {
 
     int rdb_fd;
     off_t rdb_file_size;
+    int write_command_count; // 用于触发 RDB 快照的计数器
 
     int role; // master/slave
 };

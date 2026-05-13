@@ -3,7 +3,7 @@
 #include <string.h>
 #include <errno.h>
 #include "kvs_config.h"
-#include "./deps/tomlc99/toml.h" // 根据你的实际路径修改
+#include "toml.h"
 
 // --- 宏定义：极速读取助手 ---
 
@@ -64,7 +64,7 @@ int kvs_config_load(kvs_config_t *conf, const char *filename) {
         CONF_GET_STR(server, "bind_ip", conf->bind_ip, "0.0.0.0");
         CONF_GET_INT(server, "port", conf->port, KVS_DEFAULT_PORT);
         CONF_GET_INT(server, "repl_backlog_size", conf->repl_backlog_size, KVS_DEFAULT_BACKLOG);
-        CONF_GET_INT(server, "max_tcp_connections", conf->max_tcp_connections, KVS_DEFAULT_BACKLOG);
+        CONF_GET_INT(server, "max_tcp_connections", conf->max_tcp_connections, KVS_DEFAULT_TCP_CONNECTIONS);
         CONF_GET_STR(server, "log_level", conf->log_level, KVS_DEFAULT_LOG_LEVEL);
         CONF_GET_INT(server, "io_uring_entries", conf->io_uring_entries, KVS_DEFAULT_IO_URING_ENTRIES);
         CONF_GET_INT(server, "tcp_recv_buf_size", conf->tcp_recv_buf_size, 1048576);
@@ -87,6 +87,7 @@ int kvs_config_load(kvs_config_t *conf, const char *filename) {
         CONF_GET_STR(persist, "aof_path", conf->aof_path, "./kvstore.aof");
         CONF_GET_STR(persist, "rdb_path", conf->rdb_path, "./dump.rdb");
         CONF_GET_INT(persist, "aof_fsync_policy", conf->aof_fsync_policy, 2);
+        CONF_GET_INT(persist, "rdb_policy", conf->rdb_policy, 100000); // 默认100000一次rdb
     } else {
         conf->aof_enabled = 0;
         strcpy(conf->aof_path, "./kvstore.aof");

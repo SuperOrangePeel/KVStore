@@ -204,6 +204,7 @@ struct kvs_pers_context_s * kvs_persistence_create(struct kvs_pers_config_s *con
     ctx->buffer_size = AOF_MAX_BUFFER_SIZE;
     ctx->write_offset = 0;
 
+    ctx->rdb_policy = config->rdb_policy > 0 ? config->rdb_policy : 0;
     ctx->rdb_filename = (char*)kvs_malloc(strlen(rdb_filename) + 1);
     if(ctx->rdb_filename == NULL) {
         assert(0);

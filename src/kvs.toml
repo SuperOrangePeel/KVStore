@@ -22,6 +22,8 @@ aof_path = "kvstore.aof"
 rdb_path = "dump.rdb"
 # 0: no, 1: always, 2: everysec
 aof_fsync_policy = 1
+# 多少次写操作后触发一次 RDB 快照，默认 100000 次
+rdb_policy = 1000000
 
 [replication]
 # 如果是 Slave，取消注释下面两行

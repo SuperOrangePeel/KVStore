@@ -28,6 +28,7 @@ struct kvs_pers_context_s {
 
     //FILE* rdb_fp;
     char *rdb_filename;
+    int rdb_policy; // 多少次写操作后触发一次 RDB 快照，默认 100000 次
     size_t rdb_size;
     struct kvs_aof_engine aof_engine;
 };
@@ -36,6 +37,7 @@ struct kvs_pers_config_s {
     struct kvs_loop_s *loop;
     int aof_enabled;
     kvs_pers_type_t aof_fsync_policy; // 0: every sec, 1: every cmd, 2: no fsync
+    int rdb_policy; // 多少次写操作后触发一次 RDB 快照，默认 100000 次
     char *aof_filename;
     char *rdb_filename;
 };

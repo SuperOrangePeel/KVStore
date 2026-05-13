@@ -30,7 +30,7 @@ static void _kvs_server_check_child_exit(struct kvs_server_s *server) {
 
             // 检查退出状态：是正常退出(exit 0) 还是 被杀/报错
             if (WIFEXITED(statloc) && WEXITSTATUS(statloc) == 0) {
-                LOG_INFO("Background RDB saved successfully.");
+                LOG_DEBUG("Background RDB saved successfully.");
                 
                 // 【核心】RDB 成功，触发广播逻辑
                 // 这里调用 server的propagate 去通知所有等待的 Slave 和client

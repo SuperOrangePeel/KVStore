@@ -147,6 +147,8 @@ int main(int argc, char *argv[]) {
     if(config.master_ip[0] == '\0') {
         // Master mode
         server_config.role = KVS_SERVER_ROLE_MASTER;
+        server_config.pers_config.rdb_policy = config.rdb_policy; // rdb
+
         kvs_server_init(&global_server, &server_config);
         kvs_server_storage_recovery(&global_server); // recovery from AOF/RDB
         LOG_INFO("Start as Master");
@@ -154,6 +156,7 @@ int main(int argc, char *argv[]) {
         // Slave mode
         server_config.role = KVS_SERVER_ROLE_SLAVE;
         server_config.pers_config.aof_enabled = 0; // slave no need to fsync AOF
+        // slave no need rdb persistence.
         kvs_server_init(&global_server, &server_config);
         LOG_INFO("Start as Slave, master %s:%d", config.master_ip, config.master_port);
     }
