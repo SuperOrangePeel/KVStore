@@ -1,16 +1,15 @@
 # 9.1 Kvstore
 ## run
 ```shell
-mkdir test_slave
-
+mkdir build 
+cd build
+cmake ..
 make
 
 sudo modprobe siw
 sudo rdma link add siw0 type siw netdev <网卡名>
 
 ./kvstore ./kvs.toml
-cd test_slave
-
 ```
 
 ## 架构
@@ -28,14 +27,85 @@ cd test_slave
 
 
 ## 性能测试
-### save
+### redis-benchmark pipeline
+关闭aof
+
+
+
+### rdb
+```shell
 redis-benchmark -h 172.16.135.130 -p 2000 -t set -n 5000000 -P 10
+```
 
-1000: 1893222.25
-10000: 1926040.12
-100000: 2091175.25
-1000000: 2229157.25
+| **save 触发阈值** | **SET QPS**  | **相比 1000 提升** | **相比 1000000 下降** |
+| ----------------- | ------------ | ------------------ | --------------------- |
+| 1000              | 1,893,222.25 | baseline           | 15.06%                |
+| 10000             | 1,926,040.12 | +1.73%             | 13.60%                |
+| 100000            | 2,091,175.25 | +10.45%            | 6.19%                 |
+| 1000000           | 2,229,157.25 | +17.74%            | baseline              |
 
+### aof
+
+```shell
+# 2000000条set，500 pipeline
+./test/test_hash <ip> <port> 1 5000000
+````
+echo: 7479107.11
+
+| **系统** | **关闭 AOF QPS** | **开启 AOF everysec QPS** | **下降 QPS** | **下降比例** | **保留性能** |
+| -------- | ---------------- | ------------------------- | ------------ | ------------ | ------------ |
+| KVStore  | 2,710,486.19     | 2,186,143.57              | 524,342.62   | **19.34%**   | 80.66%       |
+| Redis    | 1,736,368.85     | 1,253,161.88              | 483,206.97   | **27.83%**   | 72.17%       |
+
+同步写：1312486.67
+
+
+### rdma vs. sendfile 
+mtu 1500
+[client] connected to 172.16.135.130:2000
+[client] input file: test_2g.dat
+[client] file size: 2147483648 bytes
+[client] sent 2048.00 MiB
+[client] sent final chunk
+[client] done
+[client] total bytes: 2147483648
+[client] elapsed: 4.133 sec
+[client] throughput: 495.53 MiB/s
+
+
+[server] listening on 172.16.135.130:2000
+[server] connection established
+[server] received 2048.00 MiB
+[server] received FIN chunk
+[server] done
+[server] total bytes: 2147483648
+[server] elapsed: 4.426 sec
+[server] throughput: 462.69 MiB/s
+
+mtu 9000
+[server] listening on 172.16.135.130:2000
+[server] connection established
+[server] received 2048.00 MiB
+[server] received FIN chunk
+[server] done
+[server] total bytes: 2147483648
+[server] elapsed: 2.789 sec
+[server] throughput: 734.19 MiB/s
+
+[client] connected to 172.16.135.130:2000
+[client] input file: test_2g.dat
+[client] file size: 2147483648 bytes
+[client] sent 2048.00 MiB
+[client] sent final chunk
+[client] done
+[client] total bytes: 2147483648
+[client] elapsed: 2.730 sec
+[client] throughput: 750.11 MiB/s
+
+
+mtu 1500
+
+mtu 9000
 
 
 ### redis-benchmark
@@ -69,7 +139,7 @@ SET: 228592.34 requests per second, p50=0.119 msec
 
 ```shell
 $ sudo perf record  -p 681498 -g -- sleep 10
-$ ./test/test_hash 127.0.0.1 2000 1 5000000
+$ ./test/test_hash 172.16.135.130 2000 1 5000000
 
 +   27.86%    14.08%  kvstore  kvstore            [.] kvs_hash_resp_set                                           
 +   11.80%    11.77%  kvstore  [kernel.kallsyms]  [k] __wake_up    
@@ -77,7 +147,7 @@ $ ./test/test_hash 127.0.0.1 2000 1 5000000
 业务代码本身只占27.86%CPU时间
 
 ```shell
-$ ./test/test_hash 127.0.0.1 2000 1 5000000
+$ ./test/test_hash 172.16.135.130 2000 1 5000000
 
 --- HSET Results ---
 Total Time:     2.526 seconds

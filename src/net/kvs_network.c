@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <assert.h>
 
+static inline void _kvs_net_deinit_conn(struct kvs_network_s *net, struct kvs_conn_s *conn);
+
 static inline void _kvs_net_create_buffer(struct kvs_network_s *network, struct kvs_conn_s *conn) {
     if(conn == NULL) return;
     if(conn->r_buffer != NULL || conn->s_buffer != NULL) {
@@ -78,6 +80,112 @@ static inline int _kvs_net_get_conn_idx(struct kvs_network_s *net, struct kvs_co
     return (int)(conn - net->conn_pool);
 }
 
+static void _kvs_net_remove_pending(struct kvs_network_s *net, struct kvs_conn_s *conn) {
+    if(net == NULL || conn == NULL || !conn->_internal.is_pending) {
+        return;
+    }
+
+    struct kvs_conn_s *prev = NULL;
+    struct kvs_conn_s *cur = net->pending_head;
+    while(cur != NULL) {
+        if(cur == conn) {
+            if(prev) {
+                prev->_internal.pending_next = cur->_internal.pending_next;
+            } else {
+                net->pending_head = cur->_internal.pending_next;
+            }
+            if(net->pending_tail == cur) {
+                net->pending_tail = prev;
+            }
+            cur->_internal.pending_next = NULL;
+            cur->_internal.is_pending = 0;
+            return;
+        }
+        prev = cur;
+        cur = cur->_internal.pending_next;
+    }
+
+    conn->_internal.pending_next = NULL;
+    conn->_internal.is_pending = 0;
+}
+
+static int _kvs_net_process_buffer(struct kvs_conn_s *conn) {
+    if(conn == NULL || conn->_internal.net == NULL || conn->_internal.net->on_msg == NULL) {
+        return KVS_ERR;
+    }
+
+    int read_size = 0;
+    int status = conn->_internal.net->on_msg(conn, &read_size);
+    if (read_size < 0 || read_size > conn->r_idx) {
+        LOG_FATAL("invalid read_size: %d, r_idx: %d", read_size, conn->r_idx);
+        assert(0);
+        read_size = conn->r_idx;
+    }
+    if(KVS_QUIT == status) {
+        conn->_internal.net->on_close(conn);
+        close(conn->_internal.fd);
+        _kvs_net_deinit_conn(conn->_internal.net, conn);
+        kvs_net_release_conn(conn->_internal.net, conn);
+        return KVS_QUIT;
+    }
+
+    int remain_size = conn->r_idx - read_size;
+    if(remain_size < 0) {
+        LOG_FATAL("remain_size < 0, read_size: %d, r_idx: %d", read_size, conn->r_idx);
+        assert(0);
+        remain_size = 0;
+    }
+    if(remain_size > 0 && read_size > 0) {
+        memmove(conn->r_buffer, conn->r_buffer + read_size, remain_size);
+    }
+    conn->r_idx = remain_size;
+    return status;
+}
+
+kvs_status_t kvs_net_pending_conn(struct kvs_conn_s *conn) {
+    if(conn == NULL || conn->_internal.net == NULL) {
+        return KVS_ERR;
+    }
+    if(conn->_internal.is_pending) {
+        return KVS_OK;
+    }
+
+    conn->_internal.pending_next = NULL;
+    conn->_internal.is_pending = 1;
+    if(conn->_internal.net->pending_tail) {
+        conn->_internal.net->pending_tail->_internal.pending_next = conn;
+    } else {
+        conn->_internal.net->pending_head = conn;
+    }
+    conn->_internal.net->pending_tail = conn;
+    return KVS_OK;
+}
+
+void kvs_net_resume_pending(struct kvs_network_s *net) {
+    if(net == NULL) {
+        return;
+    }
+
+    struct kvs_conn_s *cur = net->pending_head;
+    net->pending_head = NULL;
+    net->pending_tail = NULL;
+
+    while(cur != NULL) {
+        struct kvs_conn_s *next = cur->_internal.pending_next;
+        cur->_internal.pending_next = NULL;
+        cur->_internal.is_pending = 0;
+
+        if(!cur->_internal.is_closed && cur->r_idx > 0) {
+            _kvs_net_process_buffer(cur);
+        }
+        if(!cur->_internal.is_closed && !cur->_internal.is_pending) {
+            kvs_net_set_recv_event(cur);
+        }
+
+        cur = next;
+    }
+}
+
 kvs_status_t kvs_net_release_conn(struct kvs_network_s *net, struct kvs_conn_s *conn) {
     if(net->free_conn_stack_top >= net->max_conns - 1) {
         LOG_ERROR("Free connection stack overflow");
@@ -88,7 +196,6 @@ kvs_status_t kvs_net_release_conn(struct kvs_network_s *net, struct kvs_conn_s *
     int conn_idx = _kvs_net_get_conn_idx(net, conn);
     net->free_conn_stack_top ++;
     net->free_conn_stack[net->free_conn_stack_top] = conn_idx;
-    if(net)
     return KVS_OK;
 }
 
@@ -104,6 +211,7 @@ static inline void _kvs_net_deinit_conn(struct kvs_network_s *net, struct kvs_co
     // 如果连接的fd是最大的，更新 conn_num
    // net->conn_num = conn->_internal.fd + 1 == net->conn_num ? net->conn_num - 1 : net->conn_num;
 
+    _kvs_net_remove_pending(net, conn);
 
     // 不要设置为0，没有意义。。。还会导致不明事件。。
     //conn->r_buf_sz = 0;
@@ -116,6 +224,7 @@ static inline void _kvs_net_deinit_conn(struct kvs_network_s *net, struct kvs_co
     conn->_internal.is_reading = 0;
     conn->_internal.is_writing = 0;
     conn->_internal.is_closed = 1;
+    conn->_internal.pending_next = NULL;
     // kvs_loop_cancel_event(&conn->_internal.net->loop, &conn->_internal.read_ev);
     // kvs_loop_cancel_event(&conn->_internal.net->loop, &conn->_internal.write_ev);
 }
@@ -185,34 +294,13 @@ static void _net_on_read(void *ctx, int res, int flags) {
     // 更新 buffer 指针
     conn->r_idx += res;
     assert(conn->r_idx <= conn->r_buf_sz && conn->r_idx >= 0);
-    // 【关键】调用业务层 (L1)
-    if (conn->_internal.net->on_msg) {
-        int read_size = 0;
-        // LOG_DEBUG("on_msg before");
-        if(KVS_QUIT == conn->_internal.net->on_msg(conn, &read_size)) {
-            //todo: close connection
-        }
-        int remain_size = conn->r_idx - read_size; 
-        if(remain_size < 0) {
-            LOG_FATAL("remain_size < 0, read_size: %d, r_idx: %d", read_size, conn->r_idx);
-            assert(0);
-            remain_size = 0;
-        }
-        if(remain_size > 0) {
-            // 有剩余数据，搬移到缓冲区头部
-            memmove(conn->r_buffer, conn->r_buffer + read_size, remain_size);
-            // if(conn->r_buffer[0] != '*') {
-            //     LOG_DEBUG("read_size:%d", read_size);
-            //     LOG_FATAL("after on_msg, invalid protocol: no '*', first byte: %c", conn->r_buffer[0]);
-            //     assert(0);
-            // }
-        }
-        conn->r_idx = remain_size;
+    if (_kvs_net_process_buffer(conn) == KVS_QUIT) {
+        return;
     }
     
-    // 如果没关连接，继续注册读
-    //kvs_loop_add_read(&conn->_internal.net->loop, &conn->_internal.read_ev, conn->r_buffer + conn->r_idx, conn->r_buf_sz - conn->r_idx);
-    kvs_net_set_recv_event(conn);
+    if(!conn->_internal.is_closed && !conn->_internal.is_pending) {
+        kvs_net_set_recv_event(conn);
+    }
 }
 
 static inline void _kvs_net_init_conn(struct kvs_network_s *net, struct kvs_conn_s *conn, int client_fd) {
@@ -222,6 +310,8 @@ static inline void _kvs_net_init_conn(struct kvs_network_s *net, struct kvs_conn
     conn->_internal.is_closed = 0;
     conn->_internal.is_reading = 0;
     conn->_internal.is_writing = 0;
+    conn->_internal.is_pending = 0;
+    conn->_internal.pending_next = NULL;
     _kvs_net_create_buffer(net, conn);
 
     conn->header.user_data = NULL; // 业务层可以自行设置
@@ -242,11 +332,18 @@ static void _net_on_accept(void *ctx, int res, int flags) {
     
     // 1. 从 Loop 拿到了新的 fd
     int client_fd = res;
-    if (client_fd < 0) return; // Error handling
+    if (client_fd < 0) {
+        LOG_ERROR("accept failed: %s (code: %d)", strerror(-client_fd), -client_fd);
+        net->client_addrlen = sizeof(net->client_addr);
+        kvs_loop_add_accept(net->loop, &net->accept_ev,
+            (struct sockaddr*)&net->client_addr, &net->client_addrlen);
+        return;
+    }
     if(client_fd >= net->max_conns) {
         LOG_ERROR("accepted fd %d exceeds max_conns %d", client_fd, net->max_conns);
         close(client_fd);
         // 重新提交 accept
+        net->client_addrlen = sizeof(net->client_addr);
         kvs_loop_add_accept(net->loop, &net->accept_ev, 
             (struct sockaddr*)&net->client_addr, &net->client_addrlen);
         return;
@@ -259,6 +356,7 @@ static void _net_on_accept(void *ctx, int res, int flags) {
         LOG_ERROR("No free connection available, closing accepted fd %d", client_fd);
         close(client_fd);
         // 重新提交 accept
+        net->client_addrlen = sizeof(net->client_addr);
         kvs_loop_add_accept(net->loop, &net->accept_ev, 
             (struct sockaddr*)&net->client_addr, &net->client_addrlen);
         return;
@@ -276,6 +374,7 @@ static void _net_on_accept(void *ctx, int res, int flags) {
     kvs_net_set_recv_event(conn);
 
     // 5. Re-arm accept (io_uring 特性，需重新提交 accept)
+    net->client_addrlen = sizeof(net->client_addr);
     kvs_loop_add_accept(net->loop, &net->accept_ev, 
         (struct sockaddr*)&net->client_addr, &net->client_addrlen);
 }
@@ -314,6 +413,7 @@ int _kvs_net_init_server(const char *ip, unsigned short port) {
         close(sockfd);
         return -1;
     }
+    LOG_INFO("Server listening on %s:%d, fd: %d", ip, port, sockfd);
 
     return sockfd;
 }
@@ -343,6 +443,8 @@ int _kvs_net_init_server(const char *ip, unsigned short port) {
 
 // 初始化函数
 kvs_status_t kvs_net_init(struct kvs_network_s  *net, struct kvs_network_config_s *conf) {
+    memset(net, 0, sizeof(*net));
+
     // 1. 初始化 Loop
     //kvs_loop_init(&net->loop, conf->io_uring_entries);
     net->loop = conf->loop;
@@ -370,11 +472,13 @@ kvs_status_t kvs_net_init(struct kvs_network_s  *net, struct kvs_network_config_
     // 3. 启动监听 Socket
     net->server_fd = _kvs_net_init_server(conf->server_ip, conf->port_listen);
     if (net->server_fd < 0) {
+        LOG_ERROR("Failed to initialize server socket");
         return -1;
     }
     
     // 4. 注册第一个事件：Accept
     kvs_event_init(&net->accept_ev, net->server_fd, KVS_EV_ACCEPT, _net_on_accept, net);
+    net->client_addrlen = sizeof(net->client_addr);
     kvs_loop_add_accept(net->loop, &net->accept_ev, (struct sockaddr*)&net->client_addr, &net->client_addrlen);
     // if(conf->use_rdma) {
     //     _kvs_net_init_rdma(net, conf);

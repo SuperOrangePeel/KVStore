@@ -87,12 +87,14 @@ int kvs_config_load(kvs_config_t *conf, const char *filename) {
         CONF_GET_STR(persist, "aof_path", conf->aof_path, "./kvstore.aof");
         CONF_GET_STR(persist, "rdb_path", conf->rdb_path, "./dump.rdb");
         CONF_GET_INT(persist, "aof_fsync_policy", conf->aof_fsync_policy, 2);
+        CONF_GET_INT(persist, "aof_write_mode", conf->aof_write_mode, 0);
         CONF_GET_INT(persist, "rdb_policy", conf->rdb_policy, 100000); // 默认100000一次rdb
     } else {
         conf->aof_enabled = 0;
         strcpy(conf->aof_path, "./kvstore.aof");
         strcpy(conf->rdb_path, "./dump.rdb");
         conf->aof_fsync_policy = 2;
+        conf->aof_write_mode = 0;
     }
 
     // 5. 读取 Section: [replication]

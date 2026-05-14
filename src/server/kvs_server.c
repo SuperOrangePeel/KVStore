@@ -23,6 +23,22 @@
 
 // struct kvs_server_s *global_server = NULL;
 
+static void _kvs_server_on_aof_available(void *arg) {
+	struct kvs_server_s *server = (struct kvs_server_s *)arg;
+	if(server == NULL) {
+		return;
+	}
+	kvs_net_resume_pending(&server->network);
+}
+
+static void _kvs_server_before_sleep(void *arg) {
+	struct kvs_server_s *server = (struct kvs_server_s *)arg;
+	if(server == NULL || server->pers_ctx == NULL) {
+		return;
+	}
+	kvs_persistence_before_sleep(server->pers_ctx);
+}
+
 int kvs_server_register_master(struct kvs_server_s *server, int master_fd) {
 	struct kvs_conn_s *conn = NULL;
 	int ret = kvs_net_register_fd(&server->network, master_fd, &conn);
@@ -50,7 +66,10 @@ int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *con
 
 	//2. init persistence context
 	config_pt->pers_config.loop = &server->loop;
+	config_pt->pers_config.on_aof_available = _kvs_server_on_aof_available;
+	config_pt->pers_config.on_aof_available_arg = server;
     server->pers_ctx = kvs_persistence_create(&config_pt->pers_config);
+	kvs_loop_set_before_sleep(&server->loop, _kvs_server_before_sleep, server);
 	kvs_server_init_aof_timer(server);
 
 	// 3. init data structures
@@ -600,6 +619,9 @@ kvs_status_t kvs_server_msg_pump(struct kvs_conn_s *conn, int *read_size, kvs_cm
 		kvs_status_t result = handler(server, &cmd, conn);
 		if(result == KVS_BREAK) {
 			parsed_total_len = conn->r_idx; // 清空缓冲区
+			break;
+		} else if(result == KVS_AGAIN) {
+			parsed_total_len -= parsed_len; // AOF buffer 满了，当前命令留在读缓冲区等待下次重试
 			break;
 		} else if(result == KVS_ERR) {
 			LOG_ERROR("execute command failed");

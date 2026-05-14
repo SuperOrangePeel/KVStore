@@ -12,7 +12,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(ENABLE_JEMALLOC "Link jemalloc" OFF)
 option(BUILD_NTYCO "Build deps/NtyCo before kvstore" ON)
-option(BUILD_TEST_DIR "Build ./test subdir if it has Makefile" OFF)
+option(BUILD_TEST_DIR "Build ./test subdir if it has Makefile" ON)
 
 # =========================
 # Compiler flags
@@ -60,12 +60,12 @@ set(KVSTORE_SOURCES
     src/net/kvs_network.c
     src/net/kvs_rdma_engine.c
 
-    src/persistence/kvs_aof_engine.c
     src/persistence/kvs_persistence.c
 
     src/protocol/kvs_response.c
     src/protocol/kvs_resp_protocol.c
 
+    src/server/echo.c
     src/server/kvs_server.c
     src/server/kvs_server_client.c
     src/server/kvs_server_db.c
@@ -190,4 +190,10 @@ add_custom_target(restore
     COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_SOURCE_DIR}/kvstore.aof
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/kvstore.aof.bk ${CMAKE_SOURCE_DIR}/kvstore.aof
     COMMENT "Restoring kvstore.aof from kvstore.aof.bk"
+)
+
+add_custom_target(ebpf
+    COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR}/ebpf -B ${CMAKE_BINARY_DIR}/ebpf
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/ebpf -j
+    COMMENT "Building eBPF programs"
 )

@@ -29,6 +29,7 @@ typedef struct {
     int aof_enabled;
     char aof_path[256];
     int aof_fsync_policy; // 0: no, 1: always, 2: everysec
+    int aof_write_mode; // 0: async_iouring, 1: sync_buffered
 
     //int rdb_compression;
     char rdb_path[256];

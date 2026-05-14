@@ -17,13 +17,15 @@ log_level = "info"
 
 
 [persistence]
-aof_enabled = false
+aof_enabled = true
 aof_path = "kvstore.aof"
 rdb_path = "dump.rdb"
-# 0: no, 1: always, 2: everysec
+# 0: no, 1: everysec
 aof_fsync_policy = 1
+# 0: async_iouring, 1: sync_buffered
+aof_write_mode = 1
 # 多少次写操作后触发一次 RDB 快照，默认 100000 次
-rdb_policy = 1000000
+rdb_policy = -1
 
 [replication]
 # 如果是 Slave，取消注释下面两行

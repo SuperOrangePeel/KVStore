@@ -60,6 +60,27 @@ int format_del(char *buf, int i) {
                    strlen(key), key);
 }
 
+int format_cmd(char *buf, int mode, int i) {
+    return (mode == 1) ? format_set(buf, i) :
+        (mode == 2) ? format_get(buf, i) : format_del(buf, i);
+}
+
+int send_all(int sock, const char *buf, int len) {
+    int sent = 0;
+
+    while (sent < len) {
+        int n = send(sock, buf + sent, len - sent, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1;
+        sent += n;
+    }
+
+    return sent;
+}
+
 // 统计缓冲区中出现的字符串次数
 int count_confirmed_responses(const char *buf, int len) {
     int count = 0;
@@ -85,7 +106,7 @@ void run_test(const char *ip, int port, int mode, int count) {
         exit(1);
     }
 
-    char send_buf[4096];
+    char send_buf[BUF_SIZE];
     char recv_buf[BUF_SIZE];
     int sent_count = 0;
     int success_count = 0;
@@ -97,12 +118,26 @@ void run_test(const char *ip, int port, int mode, int count) {
     gettimeofday(&start_time, NULL);
 
     while (success_count < count) {
-        // 1. 批量发送
-        while (sent_count < count && (sent_count - success_count) < BATCH_SIZE) {
-            int len = (mode == 1) ? format_set(send_buf, sent_count) : 
-                (mode == 2) ? format_get(send_buf, sent_count) : format_del(send_buf, sent_count);
-            if (send(sock, send_buf, len, 0) <= 0) break;
-            sent_count++;
+        // 1. 真 pipeline：先把一批命令拼到同一个缓冲区，再一次 send 出去
+        if (sent_count < count && (sent_count - success_count) < BATCH_SIZE) {
+            int batch_len = 0;
+            int batch_count = 0;
+
+            while (sent_count + batch_count < count &&
+                   (sent_count + batch_count - success_count) < BATCH_SIZE) {
+                int len = format_cmd(send_buf + batch_len, mode, sent_count + batch_count);
+                if (batch_len + len >= (int)sizeof(send_buf)) break;
+                batch_len += len;
+                batch_count++;
+            }
+
+            if (batch_count > 0) {
+                if (send_all(sock, send_buf, batch_len) < 0) {
+                    perror("Send failed");
+                    break;
+                }
+                sent_count += batch_count;
+            }
         }
 
         // 2. 批量接收并校验

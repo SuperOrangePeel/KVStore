@@ -88,6 +88,8 @@ struct kvs_conn_s {
         int is_closed;
         int is_reading; // todo: avoid read/write conflict in uring
         int is_writing; 
+        int is_pending;
+        struct kvs_conn_s *pending_next;
        // struct kvs_proactor_s *proactor;
          // 【关键】嵌入事件，供 loop 使用
         kvs_event_t read_ev;
@@ -107,7 +109,7 @@ typedef int (*kvs_on_accept_cb)(struct kvs_conn_s *conn);
 typedef int (*kvs_on_msg_cb)(struct kvs_conn_s *conn, int *read_size);
 typedef int (*kvs_on_send_cb)(struct kvs_conn_s *conn, int bytes_sent);
 typedef int (*kvs_on_close_cb)(struct kvs_conn_s *conn);
-typedef int  (*kvs_on_recv_cb)(void *ctx, int res);
+//typedef int  (*kvs_on_recv_cb)(void *ctx, int res);
 //typedef int (*kvs_on_send_cb)(void *ctx, int res);
 
 
@@ -128,6 +130,8 @@ struct kvs_network_s {
 
     int *free_conn_stack;
     int free_conn_stack_top;
+    struct kvs_conn_s *pending_head;
+    struct kvs_conn_s *pending_tail;
     
     // 3. 监听事件 (监听 socket 比较特殊，单独放)
     kvs_event_t accept_ev;
@@ -146,6 +150,9 @@ struct kvs_network_s {
     kvs_on_send_cb on_send;
     kvs_on_close_cb on_close;
 };
+
+kvs_status_t kvs_net_pending_conn(struct kvs_conn_s *conn);
+void kvs_net_resume_pending(struct kvs_network_s *net);
 
 
 
@@ -174,7 +181,7 @@ struct kvs_network_config_s {
     //struct kvs_rdma_config_s rdma_config;
 };
 
-int kvs_net_init(struct kvs_network_s *net, struct kvs_network_config_s *conf);
+kvs_status_t kvs_net_init(struct kvs_network_s *net, struct kvs_network_config_s *conf);
 kvs_status_t kvs_net_deinit(struct kvs_network_s  *net);
 // void kvs_net_start(struct kvs_network_s *net);
 

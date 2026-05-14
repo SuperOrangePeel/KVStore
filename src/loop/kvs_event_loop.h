@@ -26,6 +26,7 @@ typedef enum {
 // res: 系统调用返回值 (读写字节数 或 errno)
 // flags: cqe->flags (例如 IORING_CQE_F_MORE)
 typedef void (*kvs_event_cb)(void *ctx, int res, int flags);
+typedef void (*kvs_loop_before_sleep_cb)(void *ctx);
 
 // --- 原子事件结构 (嵌入到业务结构体中) ---
 typedef struct kvs_event_s {
@@ -44,6 +45,8 @@ typedef struct kvs_event_s {
 typedef struct kvs_loop_s {
     struct io_uring ring;
     int stop;
+    kvs_loop_before_sleep_cb before_sleep;
+    void *before_sleep_ctx;
 } kvs_loop_t;
 
 // API
@@ -51,6 +54,7 @@ int kvs_loop_init(kvs_loop_t *loop, int entries);
 void kvs_loop_deinit(kvs_loop_t *loop);
 void kvs_loop_run(kvs_loop_t *loop);
 void kvs_loop_stop(kvs_loop_t *loop);
+void kvs_loop_set_before_sleep(kvs_loop_t *loop, kvs_loop_before_sleep_cb cb, void *ctx);
 
 
 // --- 提交接口 (只 Prep，不 Submit) ---

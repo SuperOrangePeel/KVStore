@@ -11,7 +11,11 @@ int kvs_loop_init(kvs_loop_t *loop, int entries) {
     // IORING_SETUP_SQPOLL 可以进一步减少系统调用，但需要 root 权限，暂时不用
     struct io_uring_params params;
 	memset(&params, 0, sizeof(params));
-	io_uring_queue_init_params(entries, &loop->ring, &params);
+	int ret = io_uring_queue_init_params(entries, &loop->ring, &params);
+    if (ret < 0) {
+        fprintf(stderr, "io_uring_queue_init_params failed: %s\n", strerror(-ret));
+        return ret;
+    }
 
     return 0;
 }
@@ -24,20 +28,31 @@ void kvs_loop_stop(kvs_loop_t *loop) {
     loop->stop = 1;
 }
 
+void kvs_loop_set_before_sleep(kvs_loop_t *loop, kvs_loop_before_sleep_cb cb, void *ctx) {
+    if(loop == NULL) {
+        return;
+    }
+    loop->before_sleep = cb;
+    loop->before_sleep_ctx = ctx;
+}
+
 // --- 核心：主循环 ---
 void kvs_loop_run(kvs_loop_t *loop) {
     struct io_uring_cqe *cqe;
     unsigned head;
     
     while (!loop->stop) {
+        if(loop->before_sleep) {
+            loop->before_sleep(loop->before_sleep_ctx);
+        }
         // 【关键点】：Submit and Wait
         // 这一步会把上一轮回调中所有 add_read/write 产生的 SQE 一次性提交 (Batch Submit)
         // 并阻塞等待至少 1 个完成事件
         //printf("kvs_loop_run: submitting and waiting\n");
         int ret = io_uring_submit_and_wait(&loop->ring, 1);
         if (ret < 0) {
-            if (errno == EINTR) continue;
-            perror("io_uring_submit_and_wait");
+            if (ret == -EINTR) continue;
+            fprintf(stderr, "io_uring_submit_and_wait failed: %s\n", strerror(-ret));
             break; // Fatal error
         }
         int count = 0;

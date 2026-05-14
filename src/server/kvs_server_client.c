@@ -3,7 +3,7 @@
 #include "kvs_server.h"
 #include "kvs_types.h"
 #include "logger.h"
-#include "kvs_response.h" // todo: 解耦！！
+//#include "kvs_response.h" // todo: 解耦！！
 
 #include <assert.h>
 
@@ -31,8 +31,8 @@ kvs_status_t _kvs_client_state_wait_bgsave(struct kvs_server_s *server, struct k
     }
     // wait bgsave finished
 
-
-    kvs_format_response(KVS_RES_OK, NULL, 0, conn);
+    server->protocol.format_response(KVS_RES_OK, NULL, 0, conn);
+    //kvs_format_response(KVS_RES_OK, NULL, 0, conn);
 
     kvs_net_set_send_event_manual(conn);
     
@@ -111,6 +111,12 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
         return KVS_OK;
     }
 
+    if((cmd->cmd_type & KVS_CMD_WRITE) &&
+       kvs_persistence_aof_should_backpressure(server->pers_ctx, (size_t)cmd->raw_len)) {
+        kvs_net_pending_conn(conn);
+        return KVS_AGAIN;
+    }
+
     kvs_result_t result = protocol->execute_command(server, cmd, conn);
 
     if(result == KVS_RES_RDB_SKIP_RESPONSE){
@@ -126,10 +132,13 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
 
     if(cmd->cmd_type & KVS_CMD_WRITE) {
         
-        server->write_command_count ++ ;
+        if( server->pers_ctx->rdb_policy > 0) server->write_command_count ++ ;
         //if(server->pers_ctx->aof_enabled) {
             // append to AOF file
-        kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len);
+        if(kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len) < 0) {
+            LOG_ERROR("append AOF failed after command execution");
+            return KVS_ERR; // 前面保证了这里应该不会失败，如果失败了说明有严重问题，直接返回错误让服务器处理
+        }
         //}
         kvs_master_propagate_command_to_slaves(server->master, cmd);
     }

@@ -5,3 +5,4 @@ deps
 .cache
 test_slave/kvstore
 .clangd
+examples
