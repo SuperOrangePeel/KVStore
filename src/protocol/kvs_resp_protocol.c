@@ -12,7 +12,8 @@ const char *command[] = {
 	"SET", "GET", "DEL", "MOD", "EXIST",
 	"RSET", "RGET", "RDEL", "RMOD", "REXIST",
 	"ASET", "AGET", "ADEL", "AMOD", "AEXIST",
-	"SAVE", "SYNC", "SYNC_RDMA"
+	"SAVE", "SYNC", "SYNC_RDMA",
+	"ECHO"
 };
 
 const int command_type[] = {
@@ -39,13 +40,16 @@ const int command_type[] = {
 	//slave sync
 	[KVS_CMD_SLAVE_SYNC] = KVS_CMD_OTHER,
 	[KVS_CMD_SLAVE_SYNC_RDMA] = KVS_CMD_OTHER,
+
+	[KVS_CMD_ECHO] = KVS_CMD_OTHER
 };
 
 const int command_length[] = {
 	3, 3, 3, 3, 5,
 	4, 4, 4, 4, 6,
 	4, 4, 4, 4, 6,
-	4, 4, 9
+	4, 4, 9, 
+	4
 };
 
 

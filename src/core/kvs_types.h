@@ -83,8 +83,9 @@ typedef enum {
 	//slave sync
 	KVS_CMD_SLAVE_SYNC,
 	KVS_CMD_SLAVE_SYNC_RDMA,
+
+	KVS_CMD_ECHO,
 	KVS_CMD_COUNT,
-	
 } kvs_command_t;
 
 typedef enum {

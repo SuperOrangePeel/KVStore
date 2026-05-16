@@ -172,6 +172,16 @@ kvs_result_t _kvs_exec_slave_sync_rdma(struct kvs_server_s *server, struct kvs_h
 }
 
 
+kvs_result_t _kvs_exec_echo(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
+    if(server == NULL || cmd == NULL) {
+        return KVS_RES_ERR;
+    }
+    // just echo the value back
+    cmd->val = cmd->key;
+    cmd->len_val = cmd->len_key;
+    return KVS_RES_VAL;
+}
+
 // static cmd_proc_t command_table_test_redis[] = {
 //     [KVS_CMD_SET] = _kvs_exec_hset,
 //     [KVS_CMD_GET] = _kvs_exec_hget,
@@ -203,6 +213,7 @@ static cmd_proc_t command_table[] = {
     //slave sync
     [KVS_CMD_SLAVE_SYNC] = _kvs_exec_slave_sync,
     [KVS_CMD_SLAVE_SYNC_RDMA] = _kvs_exec_slave_sync_rdma,
+    [KVS_CMD_ECHO] = _kvs_exec_echo
 };
 
 kvs_result_t kvs_executor_cmd(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {

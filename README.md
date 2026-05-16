@@ -24,13 +24,48 @@ sudo rdma link add siw0 type siw netdev <网卡名>
     - linux版本：Ubuntu 24.04.3 LTS
     - 分配内存：4GB
     - 分配核心：6 processer cores
+- redis version: Redis 6.2.21 (578ac274/1) 64 bit
 
 
 ## 性能测试
-### redis-benchmark pipeline
-关闭aof
 
+### redis-benchmark set
 
+1. 单客户端 / 单线程
+```shell
+redis-benchmark -h <ip> -p <port>  -t set -n 5000000 -q -P 10
+```
+| **Pipeline** | **Redis QPS** | **Redis p50** | **KVStore QPS** | **KVStore p50** | **KVStore / Redis** |
+| ------------ | ------------- | ------------- | --------------- | --------------- | ------------------- |
+| 1            | 307,749.12    | 0.087 ms      | 275,178.88      | 0.095 ms        | 0.89×               |
+| 10           | 2,606,882.25  | 0.151 ms      | 2,270,663.25    | 0.111 ms        | 0.87×               |
+| 20           | 3,387,534.00  | 0.247 ms      | 4,088,307.25    | 0.127 ms        | 1.21×               |
+| 40           | 3,968,254.00  | 0.439 ms      | 7,072,135.50    | 0.143 ms        | 1.78×               |
+| 80           | 4,201,680.50  | 0.847 ms      | 10,729,614.00   | 0.207 ms        | 2.55×               |
+| 160          | 4,690,431.50  | 1.567 ms      | 10,482,180.00   | 0.503 ms        | 2.24×               |
+
+2. 10 clients + 10 benchmark threads
+```shell
+redis-benchmark -h <ip> -p <port>  -t set -n 5000000 -q -c 10 --threads 10 -P 10
+```
+| **Pipeline** | **Redis QPS** | **Redis p50** | **KVStore QPS** | **KVStore p50** | **KVStore / Redis** |
+| ------------ | ------------- | ------------- | --------------- | --------------- | ------------------- |
+| 1            | 212,666.42    | 0.047 ms      | 201,881.53      | 0.047 ms        | 0.95×               |
+| 10           | 1,331,912.62  | 0.071 ms      | 1,816,860.38    | 0.055 ms        | 1.36×               |
+| 20           | 1,996,007.88  | 0.095 ms      | 3,328,894.75    | 0.055 ms        | 1.67×               |
+| 40           | 2,496,255.50  | 0.135 ms      | 4,990,020.00    | 0.063 ms        | 2.00×               |
+| 80           | 3,324,468.25  | 0.207 ms      | 6,657,789.50    | 0.079 ms        | 2.00×               |
+| 160          | 3,987,241.00  | 0.351 ms      | 9,960,160.00    | 0.119 ms        | 2.50×               |
+
+3. echo
+```shell
+redis-benchmark -h <ip> -p <port>  -n 5000000 -P 1 -q echo hello
+```
+
+| 系统 | 命令 | Pipeline | 请求数 | QPS | p50 延迟 | 相对 Redis |
+|---|---|---:|---:|---:|---:|---:|
+| Redis | `ECHO hello` | 1 | 500,000 | 293,255.12 | 0.087 ms | 1.00× |
+| KVStore | `ECHO hello` | 1 | 500,000 | 274,423.72 | 0.095 ms | 0.94× |
 
 ### rdb
 ```shell
@@ -47,114 +82,25 @@ redis-benchmark -h 172.16.135.130 -p 2000 -t set -n 5000000 -P 10
 ### aof
 
 ```shell
-# 2000000条set，500 pipeline
-./test/test_hash <ip> <port> 1 5000000
-````
-echo: 7479107.11
+redis-benchmark -h <ip> -p <port>  -t set -n 5000000 -q -P 20
+```
 
 | **系统** | **关闭 AOF QPS** | **开启 AOF everysec QPS** | **下降 QPS** | **下降比例** | **保留性能** |
 | -------- | ---------------- | ------------------------- | ------------ | ------------ | ------------ |
-| KVStore  | 2,710,486.19     | 2,186,143.57              | 524,342.62   | **19.34%**   | 80.66%       |
-| Redis    | 1,736,368.85     | 1,253,161.88              | 483,206.97   | **27.83%**   | 72.17%       |
-
-同步写：1312486.67
-
+| KVStore  | 4,111,842.25     | 3,295,979.00              | 815,863.25   | 19.84%       | 80.16%         |
+| Redis    | 3,092,146.00     | 1,952,362.25              | 1,139,783.75 | 36.86%       | 63.14%       |
 
 ### rdma vs. sendfile 
-mtu 1500
-[client] connected to 172.16.135.130:2000
-[client] input file: test_2g.dat
-[client] file size: 2147483648 bytes
-[client] sent 2048.00 MiB
-[client] sent final chunk
-[client] done
-[client] total bytes: 2147483648
-[client] elapsed: 4.133 sec
-[client] throughput: 495.53 MiB/s
+
+| **方案**                                  | **MTU** | **文件大小** | **Buffer / Chunk** | **Client 吞吐**   | **Server 吞吐** | **耗时** |
+| ----------------------------------------- | ------- | ------------ | ------------------  | ----------------- | --------------- | -------- |
+| RDMA WRITE + O_DIRECT read + token/window | 1500    | 4096 MiB     | 256 MiB           | **1977.71 MiB/s** | 1977.69 MiB/s   | 2.071 s  |
+| RDMA WRITE + O_DIRECT read + token/window | 9000    | 4096 MiB     | 256 MiB               | **2057.96 MiB/s** | 2057.95 MiB/s   | 1.990 s  |
+| TCP sendfile                              | 1500    | 4096 MiB     | sendfile chunk        | **1704.92 MiB/s** | 1704.95 MiB/s   | 2.402 s  |
+| TCP sendfile                              | 9000    | 4096 MiB     | sendfile chunk        | **1865.38 MiB/s** | 1865.65 MiB/s   | 2.196 s  |
 
 
-[server] listening on 172.16.135.130:2000
-[server] connection established
-[server] received 2048.00 MiB
-[server] received FIN chunk
-[server] done
-[server] total bytes: 2147483648
-[server] elapsed: 4.426 sec
-[server] throughput: 462.69 MiB/s
-
-mtu 9000
-[server] listening on 172.16.135.130:2000
-[server] connection established
-[server] received 2048.00 MiB
-[server] received FIN chunk
-[server] done
-[server] total bytes: 2147483648
-[server] elapsed: 2.789 sec
-[server] throughput: 734.19 MiB/s
-
-[client] connected to 172.16.135.130:2000
-[client] input file: test_2g.dat
-[client] file size: 2147483648 bytes
-[client] sent 2048.00 MiB
-[client] sent final chunk
-[client] done
-[client] total bytes: 2147483648
-[client] elapsed: 2.730 sec
-[client] throughput: 750.11 MiB/s
-
-
-mtu 1500
-
-mtu 9000
-
-
-### redis-benchmark
-测试策略：使用redis-benchmark测试，测试500w次SET命令，关闭持久化。
-redis结果如下：
-```shell
-# redis
-$ redis-benchmark -h 127.0.0.1 -p 6379 -t set -n 5000000 -P 500 -q
-SET: 3927729.75 requests per second, p50=5.631 msec  
-
-# kvstore
-$ redis-benchmark -h 172.16.135.130 -p 2000 -t set -n 5000000 -P 500 -q
-SET: 7363770.00 requests per second, p50=2.919 msec
-```
-
-
-```shell
-# redis
-$ redis-benchmark -h 127.0.0.1 -p 6379 -t set -n 5000000 -P 1 -q
-SET: 275118.31 requests per second, p50=0.095 msec 
-
-# kvstore
-$ redis-benchmark -h 172.16.135.130 -p 2000 -t set -n 5000000 -P 1 -q
-SET: 228592.34 requests per second, p50=0.119 msec     
-```
-在高并发下 QPS 达到 736万，超越 Redis (392万) 约 87%，充分释放 io_uring 的批量处理能力。
-在单指令交互（Pipeline=1）场景下，性能与 Redis 处于同一数量级，延迟仅有微小差距。
-
-### 自定义测试脚本
-测试策略：进行500w次管道化的SET操作，一次性写入500w个不同的KEY，并开启持久化。
-
-```shell
-$ sudo perf record  -p 681498 -g -- sleep 10
-$ ./test/test_hash 172.16.135.130 2000 1 5000000
-
-+   27.86%    14.08%  kvstore  kvstore            [.] kvs_hash_resp_set                                           
-+   11.80%    11.77%  kvstore  [kernel.kallsyms]  [k] __wake_up    
-```
-业务代码本身只占27.86%CPU时间
-
-```shell
-$ ./test/test_hash 172.16.135.130 2000 1 5000000
-
---- HSET Results ---
-Total Time:     2.526 seconds
-Success Count:  5000000
-Actual QPS:     1979670.37
---------------------
-```
+RDMA WRITE 的接收端数据直接写入 server 预注册的内存 buffer，server 不需要像 TCP 那样通过 recv() 从 socket receive buffer 拷贝到用户态 buffer；
 
 
 ### 内存性能测试

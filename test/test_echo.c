@@ -8,7 +8,7 @@
 
 #define BUF_SIZE 1048576
 #define DEFAULT_COUNT 5000000
-#define DEFAULT_BATCH_SIZE 500
+#define DEFAULT_BATCH_SIZE 20
 
 static double get_time_diff(struct timeval start, struct timeval end) {
     return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;

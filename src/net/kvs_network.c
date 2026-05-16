@@ -281,7 +281,7 @@ static void _net_on_read(void *ctx, int res, int flags) {
             LOG_FATAL("on_close callback is NULL");
             assert(0);
         }
-        LOG_DEBUG("Read error or connection closed, res: %d:%s, closing fd: %d", res, strerror(-res), conn->_internal.fd);
+        //LOG_DEBUG("Read error or connection closed, res: %d:%s, closing fd: %d", res, strerror(-res), conn->_internal.fd);
         conn->_internal.net->on_close(conn); // notify upper layer
         //LOG_DEBUG("read error ", conn->_internal.)
         //LOG_DEBUG("closing connection fd: %d, res: %d", conn->_internal.fd, res);
