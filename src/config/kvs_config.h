@@ -39,6 +39,7 @@ typedef struct {
     // 如果 master_ip 不为空，则是 Slave
     char master_ip[64];
     int master_port;
+    int slave_mode; // 0: sync with master, 1: receive commands from eBPF forwarder
     //char master_auth[128]; // Master 密码
 
     int max_slave_count; // 仅 Master 有效

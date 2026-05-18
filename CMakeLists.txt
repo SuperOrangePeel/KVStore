@@ -13,6 +13,7 @@ option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(ENABLE_JEMALLOC "Link jemalloc" OFF)
 option(BUILD_NTYCO "Build deps/NtyCo before kvstore" ON)
 option(BUILD_TEST_DIR "Build ./test subdir if it has Makefile" ON)
+option(BUILD_EBPF "Build ./ebpf programs" ON)
 
 # =========================
 # Compiler flags
@@ -192,8 +193,10 @@ add_custom_target(restore
     COMMENT "Restoring kvstore.aof from kvstore.aof.bk"
 )
 
-add_custom_target(ebpf
-    COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR}/ebpf -B ${CMAKE_BINARY_DIR}/ebpf
-    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/ebpf -j
-    COMMENT "Building eBPF programs"
-)
+if (BUILD_EBPF)
+    add_custom_target(ebpf ALL
+        COMMAND ${CMAKE_COMMAND} -S ${CMAKE_SOURCE_DIR}/ebpf -B ${CMAKE_BINARY_DIR}/ebpf
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/ebpf -j
+        COMMENT "Building eBPF programs"
+    )
+endif()

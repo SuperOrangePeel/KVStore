@@ -102,9 +102,11 @@ int kvs_config_load(kvs_config_t *conf, const char *filename) {
     if (repl) {
         CONF_GET_STR(repl, "master_ip", conf->master_ip, "");
         CONF_GET_INT(repl, "master_port", conf->master_port, 6379);
+        CONF_GET_INT(repl, "slave_mode", conf->slave_mode, 0);
         CONF_GET_INT(repl, "max_slave_count", conf->max_slave_count, 512);
     } else {
         conf->master_ip[0] = '\0'; // 空字符串代表 Master
+        conf->slave_mode = 0;
     }
 
     // 6. 读取 Section: [rdma]
@@ -129,6 +131,7 @@ void kvs_config_dump(kvs_config_t *conf) {
     printf("Role: %s\n", conf->master_ip[0] == '\0' ? "Master" : "Slave");
     if (conf->master_ip[0] != '\0') {
         printf("Master Host: %s:%d\n", conf->master_ip, conf->master_port);
+        printf("Slave Mode: %d\n", conf->slave_mode);
     }
     printf("AOF: %s (Path: %s)\n", conf->aof_enabled ? "Yes" : "No", conf->aof_path);
     printf("============================\n");

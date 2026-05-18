@@ -24,7 +24,7 @@ set(VMLINUX_H ${CMAKE_CURRENT_BINARY_DIR}/vmlinux.h)
 # Program name
 # =========================
 
-set(BPF_TARGET xdp_forwarder)
+set(BPF_TARGET tc_forwarder)
 
 set(BPF_SRC ${CMAKE_CURRENT_SOURCE_DIR}/${BPF_TARGET}.bpf.c)
 set(USER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/${BPF_TARGET}.c)

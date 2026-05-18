@@ -121,6 +121,7 @@ int start_server(int argc, char *argv[]) {
         .master_config.rdma_recv_buf_size = rdma_reponse_buf_size,
         .slave_config.master_ip = config.master_ip,
         .slave_config.master_port = config.master_port,
+        .slave_config.slave_mode = config.slave_mode,
         .slave_config.rdb_recv_buffer_count = rdma_recv_buf_count,
         .slave_config.rdma_send_buf_size = rdma_reponse_buf_size,
 
@@ -150,7 +151,7 @@ int start_server(int argc, char *argv[]) {
         server_config.pers_config.aof_enabled = 0; // slave no need to fsync AOF
         // slave no need rdb persistence.
         kvs_server_init(&global_server, &server_config);
-        LOG_INFO("Start as Slave, master %s:%d", config.master_ip, config.master_port);
+        LOG_INFO("Start as Slave, master %s:%d, slave_mode=%d", config.master_ip, config.master_port, config.slave_mode);
     }
 
 

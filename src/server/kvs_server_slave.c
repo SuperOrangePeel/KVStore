@@ -293,6 +293,7 @@ kvs_status_t kvs_slave_init(struct kvs_slave_s *slave, struct kvs_server_s *serv
 
     slave->master_ip = config->master_ip; // set master_ip
     slave->master_port = config->master_port;
+    slave->slave_mode = config->slave_mode;
     slave->rdb_recv_buffer_count = config->rdb_recv_buffer_count;
     
     slave->rdma_send_buf_size = config->rdma_send_buf_size;
@@ -361,6 +362,13 @@ static kvs_status_t _on_master_connected(struct kvs_slave_s *slave, struct kvs_c
 
     //4. 注册事件
     struct kvs_conn_s *master_conn = (struct kvs_conn_s *)conn;
+    if(slave->slave_mode == 1) {
+        master_ctx->state = KVS_MY_MASTER_ONLINE;
+        master_ctx->processed_sz_cur = 0;
+        kvs_net_set_recv_event(master_conn);
+        LOG_INFO("Connected to eBPF forwarder, entering write-only slave mode.");
+        return KVS_OK;
+    }
     assert(master_conn->s_idx == 0);
     master_conn->s_idx = snprintf(master_conn->s_buffer, master_conn->s_buf_sz, "%s",  "*1\r\n$4\r\nSYNC\r\n");
     kvs_net_set_send_event_manual((struct kvs_conn_s *)master_conn);
@@ -804,9 +812,15 @@ kvs_status_t _kvs_slave_cmd_logic(struct kvs_server_s *server, struct kvs_handle
     }
     //if(cmd->cmd_type == KVS_CMD_READ)
     //LOG_DEBUG("Received replication command from master: %.*s", (int)cmd->len_cmd, cmd->cmd);
-    // process command
+    if(server->slave != NULL && server->slave->slave_mode == 1) {
+        if(cmd->cmd_idx != KVS_CMD_SET && cmd->cmd_idx != KVS_CMD_DEL && cmd->cmd_idx != KVS_CMD_MOD) {
+            return KVS_OK;
+        }
+    }
+
+    // process command. Replication input never sends per-command responses.
     kvs_result_t result = protocol->execute_command(server, cmd, conn);
-    
+    (void)result;
 
     return KVS_OK;
 }
@@ -829,6 +843,7 @@ static kvs_status_t _on_master_online(struct kvs_slave_s *slave, struct kvs_conn
     master_ctx->processed_sz_cur = 0;
     
     kvs_server_msg_pump(master_conn, &master_ctx->processed_sz_cur, _kvs_slave_cmd_logic);
+    return KVS_OK;
 
 }
 
@@ -979,7 +994,7 @@ void slave_start_replication(struct kvs_slave_s *slave) {
         kvs_loop_add_poll_out(&slave->server->loop, &ctx->connect_ev);
         LOG_DEBUG("Connecting to Master via TCP (in progress)...");
     } else {
-        perror("Connect failed immediately");
+        LOG_ERROR("Failed to connect to Master: %s, %s %d", strerror(errno), slave->master_ip, slave->master_port);
         assert(0);
         kvs_server_destroy_conn_ctx(slave->server, (struct kvs_conn_header_s*)master_conn);
         return; 

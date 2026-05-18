@@ -24,9 +24,13 @@ rdb_path = "dump.rdb"
 aof_fsync_policy = 1
 
 [replication]
-# 如果是 Slave，取消注释下面两行
+# 0: use normal SYNC with master, 1: connect to eBPF forwarder and accept write-only forwarded commands
+slave_mode = 0
 master_ip = "172.16.135.130"
-master_port = 2000
+
+# 3000
+master_port = 2000 
+
 # 如果是 Master，取消注释下面一行
 max_slave_count = 512
 

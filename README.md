@@ -103,56 +103,44 @@ redis-benchmark -h <ip> -p <port>  -t set -n 5000000 -q -P 20
 RDMA WRITE 的接收端数据直接写入 server 预注册的内存 buffer，server 不需要像 TCP 那样通过 recv() 从 socket receive buffer 拷贝到用户态 buffer；
 
 
-### 内存性能测试
-测试策略：进行500w次管道化的SET操作，一次性写入500w个不同的KEY。
+### 内存池
+
+```
+key:11bytes value:21bytes  500w SET
+./test_hash 172.16.135.130 2000 1 5000000 500
+```
+| **内存池**  | **SET QPS** | **插入前 VIRT** | **插入前 RES** | **插入后 VIRT** | **插入后 RES** | **删除后 VIRT** | **删除后 RES** |
+| ----------- | ------------ | --------------- | -------------- | --------------- | -------------- | --------------- | -------------- |
+| malloc      | 2,442,669.33 | 74.71 MiB       | 47.52 MiB      | 610 MiB         | 581 MiB        | 610 MiB         | 581 MiB        |
+| jemalloc    | 2,639,330.24 | 104 MiB         | 49.93 MiB      | 573 MiB         | 438 MiB        | 573 MiB         | 176 MiB        |
+| kvs_mempool | 2,795,660.69 | 74.71 MiB       | 47.54 MiB      | 459 MiB         | 430 MiB        | 459 MiB         | 430 MiB        |
+
+
+![resident](./images/resident.png)
+
+![virual](./images/virtual.png)
+
+## EBPF
+### tc forwards
 ```shell
-key:11bytes value:21bytes  500w HSET
-malloc      | 2023916.21 qps | 620M VIRT | 545M RES
-kvs_mempool | 1984553.03 qps | 469M VIRT | 394M RES
-jemalloc    | 1989839.09 qps | 509M VIRT | 402M RES
+./build/ebpf/tc_forwarder <ifname> <master_port> <listen_ip> <listen_port>\n
+
+
+./build/kvstore ./build/kvs.toml
+sudo ./build/ebpf/tc_forwarder ens161 2000 172.16.135.130 3000
+./test_slave/kvstore ./test_slave/kvs.toml
+./test/test_hash 172.16.135.130 2000 1 2000000
+./test/test_hash 172.16.135.130 2004 2 2000000
 ```
 
-```shell
-key:8bytes value:8bytes    500w HSET
-malloc      | 2199975.10 qps | 620M VIRT | 545M RES
-kvs_mempool | 2060713.57 qps | 316M VIRT | 241M RES
-jemalloc    | 2151554.65 qps | 335M VIRT | 246M RES
 ```
-
-### 持久化
-测试策略：进行500w次管道化的SET操作，一次性写入500w个不同的KEY。
-
-```shell
-# alway 策略结果：
---- SET Results ---
-Total Time:     2.621 seconds
-Success Count:  5000000
-Actual QPS:     1907322.44
---------------------
-
-# very second 策略结果：
---- SET Results ---
-Total Time:     2.546 seconds
-Success Count:  5000000
-Actual QPS:     1963904.23
---------------------
+./test/test_hash 172.16.135.130 2000 1 200000 1 
 ```
+tc qps :     38520.92
+nornmal qpas : 60874.50
 
 
-### 性能测试分析
-
-
-## 主从同步
-### RDMA
-分布式 KV 在主从全量同步时，TB 级的 RDB 文件传输会导致严重的 CPU 占用和网络 IO 瓶颈，传统 TCP 模式下内核态与用户态的多次拷贝显著增加了同步时长。
-
-KVstore实现了一种高性能、零拷贝的 RDB 传输机制，并解决了 RDMA 在高速传输中极易触发的 RNR (Receiver Not Ready) 硬件错误。
-
-基于 RDMA CMA/Verbs 开发了纯异步传输引擎，利用 Zero-Copy 绕过内核协议栈。
-设计并实现了一套基于信用的反压机制 (Backpressure)。Slave 动态向 Master 授权“信用额度（Buffer 数量）”，Master 严格按额度发送。
-有效解决了RNR错误的发生
-
-### EBPF
+### 可观测
 使用ebpf监测主从增量同步的进度
 ```shell
 $ git clone --recursive https://github.com/libbpf/libbpf-bootstrap.git

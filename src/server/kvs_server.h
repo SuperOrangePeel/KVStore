@@ -58,6 +58,7 @@ struct kvs_master_config_s {
 struct kvs_slave_config_s {
     const char *master_ip;
     unsigned short master_port;
+    int slave_mode;
     int rdb_recv_buffer_count;
     int rdma_send_buf_size;
 };
@@ -280,6 +281,7 @@ struct kvs_slave_s {
     int master_fd;
     const char *master_ip;
     unsigned short master_port;
+    int slave_mode;
     //kvs_my_master_state_t state; // SYNC_HANDSHAKE, SYNC_RDB, SYNC_AOF, SYNC_CONNECTED
     struct kvs_server_s *server;
     int rdb_recv_buffer_count;

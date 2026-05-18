@@ -5,4 +5,5 @@ deps
 .cache
 test_slave/kvstore
 .clangd
-examples
+build_jemalloc
+build_malloc

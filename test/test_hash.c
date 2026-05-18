@@ -10,6 +10,8 @@
 #define BUF_SIZE 1048576  // 1 MB     
 #define BATCH_SIZE 500    // 适当减小 Batch，防止接收缓冲区溢出
 
+int batch_size = BATCH_SIZE;
+
 double get_time_diff(struct timeval start, struct timeval end) {
     return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
 }
@@ -119,12 +121,12 @@ void run_test(const char *ip, int port, int mode, int count) {
 
     while (success_count < count) {
         // 1. 真 pipeline：先把一批命令拼到同一个缓冲区，再一次 send 出去
-        if (sent_count < count && (sent_count - success_count) < BATCH_SIZE) {
+        if (sent_count < count && (sent_count - success_count) < batch_size) {
             int batch_len = 0;
             int batch_count = 0;
 
             while (sent_count + batch_count < count &&
-                   (sent_count + batch_count - success_count) < BATCH_SIZE) {
+                   (sent_count + batch_count - success_count) < batch_size) {
                 int len = format_cmd(send_buf + batch_len, mode, sent_count + batch_count);
                 if (batch_len + len >= (int)sizeof(send_buf)) break;
                 batch_len += len;
@@ -176,11 +178,14 @@ void run_test(const char *ip, int port, int mode, int count) {
 
 int main(int argc, char *argv[]) {
     if (argc < 4) {
-        printf("Usage: %s <ip> <port> <mode: 1-SET, 2-GET, 3-DEL> [count]\n", argv[0]);
+        printf("Usage: %s <ip> <port> <mode: 1-SET, 2-GET, 3-DEL> [count] [batch_size]\n", argv[0]);
         return -1;
     }
     int mode = atoi(argv[3]);
-    int count = (argc == 5) ? atoi(argv[4]) : 500000;
+    int count = (argc > 4) ? atoi(argv[4]) : 500000;
+    if (argc > 5) {
+        batch_size = atoi(argv[5]);
+    }
     run_test(argv[1], atoi(argv[2]), mode, count);
     return 0;
 }
