@@ -12,9 +12,11 @@
     toml_datum_t d = toml_string_in(table, key); \
     if (d.ok) { \
         strncpy(target, d.u.s, sizeof(target) - 1); \
+        target[sizeof(target) - 1] = '\0'; \
         free(d.u.s); \
     } else { \
         strncpy(target, default_val, sizeof(target) - 1); \
+        target[sizeof(target) - 1] = '\0'; \
     } \
 } while(0)
 
@@ -67,6 +69,8 @@ int kvs_config_load(kvs_config_t *conf, const char *filename) {
         CONF_GET_INT(server, "max_tcp_connections", conf->max_tcp_connections, KVS_DEFAULT_TCP_CONNECTIONS);
         CONF_GET_STR(server, "log_level", conf->log_level, KVS_DEFAULT_LOG_LEVEL);
         CONF_GET_INT(server, "io_uring_entries", conf->io_uring_entries, KVS_DEFAULT_IO_URING_ENTRIES);
+        CONF_GET_STR(server, "io_uring_mode", conf->io_uring_mode, "normal");
+        CONF_GET_INT(server, "io_uring_sq_thread_idle", conf->io_uring_sq_thread_idle, 2000);
         CONF_GET_INT(server, "tcp_recv_buf_size", conf->tcp_recv_buf_size, 1048576);
         CONF_GET_INT(server, "tcp_send_buf_size", conf->tcp_send_buf_size, 1048576);
     } else {
@@ -76,6 +80,9 @@ int kvs_config_load(kvs_config_t *conf, const char *filename) {
         conf->repl_backlog_size = KVS_DEFAULT_BACKLOG;
         strcpy(conf->log_level, KVS_DEFAULT_LOG_LEVEL);
         conf->io_uring_entries = KVS_DEFAULT_IO_URING_ENTRIES;
+        strcpy(conf->io_uring_mode, "normal");
+        conf->io_uring_sq_thread_idle = 2000;
+        conf->max_tcp_connections = KVS_DEFAULT_TCP_CONNECTIONS;
         conf->tcp_recv_buf_size = 1048576;
         conf->tcp_send_buf_size = 1048576;
     }
@@ -128,6 +135,8 @@ void kvs_config_dump(kvs_config_t *conf) {
     printf("=== Server Configuration ===\n");
     printf("Bind: %s:%d\n", conf->bind_ip, conf->port);
     printf("Log Level: %s\n", conf->log_level);
+    printf("io_uring: entries=%d mode=%s sq_thread_idle=%dms\n",
+           conf->io_uring_entries, conf->io_uring_mode, conf->io_uring_sq_thread_idle);
     printf("Role: %s\n", conf->master_ip[0] == '\0' ? "Master" : "Slave");
     if (conf->master_ip[0] != '\0') {
         printf("Master Host: %s:%d\n", conf->master_ip, conf->master_port);

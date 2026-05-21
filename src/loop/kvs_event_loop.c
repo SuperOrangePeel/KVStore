@@ -5,19 +5,50 @@
 #include <errno.h>
 #include <string.h>
 
-int kvs_loop_init(kvs_loop_t *loop, int entries) {
-    //printf("kvs_loop_init: entries=%d\n", entries);
+static int kvs_loop_submit(kvs_loop_t *loop) {
+    int ret = io_uring_submit(&loop->ring);
+    if (ret < 0) {
+        fprintf(stderr, "io_uring_submit failed: %s\n", strerror(-ret));
+    }
+    return ret;
+}
+
+int kvs_loop_init_with_options(kvs_loop_t *loop, const kvs_loop_options_t *options) {
+    if (loop == NULL || options == NULL) {
+        return -EINVAL;
+    }
+
     memset(loop, 0, sizeof(*loop));
-    // IORING_SETUP_SQPOLL 可以进一步减少系统调用，但需要 root 权限，暂时不用
+
     struct io_uring_params params;
-	memset(&params, 0, sizeof(params));
-	int ret = io_uring_queue_init_params(entries, &loop->ring, &params);
+    memset(&params, 0, sizeof(params));
+
+    if (options->mode == KVS_LOOP_MODE_SQPOLL) {
+        params.flags = IORING_SETUP_SQPOLL;
+        params.sq_thread_idle = options->sq_thread_idle ? options->sq_thread_idle : 2000;
+    }
+
+    int entries = options->entries > 0 ? options->entries : 1024;
+    int ret = io_uring_queue_init_params(entries, &loop->ring, &params);
     if (ret < 0) {
         fprintf(stderr, "io_uring_queue_init_params failed: %s\n", strerror(-ret));
         return ret;
     }
 
+    loop->mode = options->mode;
+    loop->sq_thread_idle = params.sq_thread_idle;
+
     return 0;
+}
+
+int kvs_loop_init(kvs_loop_t *loop, int entries) {
+    kvs_loop_options_t options = {
+        .entries = entries,
+        .mode = KVS_LOOP_MODE_NORMAL,
+        .sq_thread_idle = 0,
+    };
+
+    return kvs_loop_init_with_options(loop, &options);
 }
 
 void kvs_loop_deinit(kvs_loop_t *loop) {
@@ -80,7 +111,7 @@ static struct io_uring_sqe *get_sqe_safe(kvs_loop_t *loop) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&loop->ring);
     if (!sqe) {
         // SQ 满了，强制提交一次
-        io_uring_submit(&loop->ring);
+        kvs_loop_submit(loop);
         sqe = io_uring_get_sqe(&loop->ring);
         if (!sqe) {
             // 还是满的？说明 CQ 也满了没处理，或者内核太忙。
@@ -172,7 +203,7 @@ void kvs_loop_cancel_event(kvs_loop_t *loop, kvs_event_t *ev) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&loop->ring);
     // 撤销 user_data 匹配的所有请求
     io_uring_prep_cancel(sqe, ev, 0); 
-    io_uring_submit(&loop->ring);
+    kvs_loop_submit(loop);
 }
 
 int kvs_loop_add_poll_in(kvs_loop_t *loop, kvs_event_t *ev) {

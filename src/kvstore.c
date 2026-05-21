@@ -22,6 +22,13 @@
 
 struct kvs_server_s global_server;
 
+static kvs_loop_mode_t get_loop_mode(const char *mode) {
+    if (mode && strcmp(mode, "sqpoll") == 0) {
+        return KVS_LOOP_MODE_SQPOLL;
+    }
+    return KVS_LOOP_MODE_NORMAL;
+}
+
 int get_logger_info(const char *level_str, LogLevel *out_level) {
     if (strcmp(level_str, "debug") == 0) {
         *out_level = LOG_DEBUG;
@@ -58,8 +65,12 @@ int start_server(int argc, char *argv[]) {
 
     // const char * server_ip = "172.16.135.130";
 
-    int io_uring_entries = 1024;
-    if (kvs_loop_init(&global_server.loop, io_uring_entries) < 0) {
+    kvs_loop_options_t loop_options = {
+        .entries = config.io_uring_entries,
+        .mode = get_loop_mode(config.io_uring_mode),
+        .sq_thread_idle = config.io_uring_sq_thread_idle > 0 ? (unsigned int)config.io_uring_sq_thread_idle : 2000,
+    };
+    if (kvs_loop_init_with_options(&global_server.loop, &loop_options) < 0) {
         return -1;
     }
     
@@ -69,8 +80,8 @@ int start_server(int argc, char *argv[]) {
         .port_listen = config.port,
         .max_conns = config.max_tcp_connections,
         
-        .read_buffer_size = 1048576,
-        .write_buffer_size = 1048576, // 1MB
+        .read_buffer_size = config.tcp_recv_buf_size,
+        .write_buffer_size = config.tcp_send_buf_size,
 
         .on_accept = kvs_handler_on_accept,
         .on_msg = kvs_handler_on_msg,

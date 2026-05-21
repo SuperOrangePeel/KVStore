@@ -42,15 +42,29 @@ typedef struct kvs_event_s {
 } kvs_event_t;
 
 // --- 循环引擎 ---
+typedef enum {
+    KVS_LOOP_MODE_NORMAL = 0,
+    KVS_LOOP_MODE_SQPOLL = 1
+} kvs_loop_mode_t;
+
+typedef struct kvs_loop_options_s {
+    int entries;
+    kvs_loop_mode_t mode;
+    unsigned int sq_thread_idle;
+} kvs_loop_options_t;
+
 typedef struct kvs_loop_s {
     struct io_uring ring;
     int stop;
+    kvs_loop_mode_t mode;
+    unsigned int sq_thread_idle;
     kvs_loop_before_sleep_cb before_sleep;
     void *before_sleep_ctx;
 } kvs_loop_t;
 
 // API
 int kvs_loop_init(kvs_loop_t *loop, int entries);
+int kvs_loop_init_with_options(kvs_loop_t *loop, const kvs_loop_options_t *options);
 void kvs_loop_deinit(kvs_loop_t *loop);
 void kvs_loop_run(kvs_loop_t *loop);
 void kvs_loop_stop(kvs_loop_t *loop);

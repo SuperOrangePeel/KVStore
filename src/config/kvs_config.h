@@ -17,6 +17,8 @@ typedef struct {
     int port;
     int repl_backlog_size;
     int io_uring_entries; // io_uring 队列深度
+    char io_uring_mode[16]; // normal or sqpoll
+    int io_uring_sq_thread_idle; // SQPOLL idle time in ms
     int max_tcp_connections;
     int tcp_recv_buf_size;
     int tcp_send_buf_size;
