@@ -34,7 +34,6 @@ if (ENABLE_ASAN)
     )
 else()
     add_compile_options(
-        -g
         -O3
         -Wall
         -Wextra
@@ -151,6 +150,7 @@ target_link_libraries(kvstore PRIVATE
 )
 
 if (ENABLE_JEMALLOC)
+    target_compile_definitions(kvstore PRIVATE KVS_USE_JEMALLOC=1)
     target_link_libraries(kvstore PRIVATE jemalloc)
 endif()
 

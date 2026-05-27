@@ -7,3 +7,4 @@ test_slave/kvstore
 .clangd
 build_jemalloc
 build_malloc
+analysis

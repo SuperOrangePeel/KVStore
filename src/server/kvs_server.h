@@ -38,16 +38,6 @@ struct kvs_pers_context_s;
 struct io_uring;
 struct ibv_mr;
 
-typedef kvs_status_t (*kvs_proto_parser_pt)(char* msg, int len, struct kvs_handler_cmd_s *cmd, int *parsed_len);
-typedef kvs_result_t (*kvs_proto_executor_pt)(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn);
-typedef kvs_status_t (*kvs_proto_response_pt)(kvs_result_t result, char *value, int len_val, struct kvs_conn_s *conn);
-
-struct kvs_protocol_s {
-    kvs_proto_parser_pt protocol_parser;
-    kvs_proto_executor_pt execute_command;
-    kvs_proto_response_pt format_response;
-};
-
 struct kvs_master_config_s {
     int max_slave_count;
     size_t repl_backlog_size;
@@ -68,7 +58,6 @@ struct kvs_server_config_s {
     struct kvs_master_config_s master_config;
     struct kvs_slave_config_s slave_config;
     struct kvs_pers_config_s pers_config;
-    struct kvs_protocol_s protocol;
 
     int use_rdma;
     size_t rdma_max_chunk_size;
@@ -178,20 +167,10 @@ typedef enum {
     KVS_CTX_MASTER_OF_ME    // 我是 Slave，这个连接是我的 Master
 } kvs_ctx_type_t;
 
-// (V-Table)
-struct kvs_ops_s {
-    kvs_status_t (*on_recv)(struct kvs_conn_s *conn, int *read_size);
-    kvs_status_t (*on_send)(struct kvs_conn_s *conn, int bytes_sent);
-    void (*on_close)(struct kvs_conn_s *conn);
-    void (*on_extra_event)(struct kvs_conn_s *conn, int event_type, void *data);
-    const char *name; 
-};
-
 struct kvs_ctx_header_s{
     kvs_ctx_type_t type;
 	void* next_handler;
     struct kvs_conn_s *conn;
-	struct kvs_ops_s ops;
 };
 
 // context for connections from slaves to me (the master)
@@ -351,7 +330,6 @@ struct kvs_server_s {
     struct kvs_event_s aof_timer_ev;    
     struct __kernel_timespec aof_ts;
 
-    struct kvs_protocol_s protocol;
 
 
     int rdb_fd;

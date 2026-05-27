@@ -6,6 +6,8 @@ bind_ip = "172.16.135.130"
 port = 2000
 # repl_backlog_size = 1048576
 # io_uring_entries = 1024
+io_uring_mode = "sqpoll" # normal or sqpoll
+io_uring_sq_thread_idle = 2000 # milliseconds, only used by sqpoll
 
 # max_tcp_connections = 1024
 # tcp_recv_buf_size = 1048576
@@ -17,13 +19,13 @@ log_level = "info"
 
 
 [persistence]
-aof_enabled = true
+aof_enabled = false
 aof_path = "kvstore.aof"
 rdb_path = "dump.rdb"
 # 0: no, 1: everysec
-aof_fsync_policy = 1
+aof_fsync_policy = 0
 # 0: async_iouring, 1: sync_buffered
-aof_write_mode = 1
+aof_write_mode = 0
 # 多少次写操作后触发一次 RDB 快照，默认 100000 次
 rdb_policy = -1
 

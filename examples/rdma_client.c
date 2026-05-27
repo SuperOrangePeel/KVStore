@@ -3,7 +3,7 @@
 // RDMA WRITE sender with token/window protocol.
 // O_DIRECT pread -> registered buffer -> RDMA_WRITE.
 //
-// Usage:
+// Usage: 172.28.217.148 
 //   ./rdma_client <server_ip> <port> <input_file> [buffer_size]
 //
 // Examples:

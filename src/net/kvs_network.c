@@ -17,6 +17,11 @@
 
 static inline void _kvs_net_deinit_conn(struct kvs_network_s *net, struct kvs_conn_s *conn);
 
+static kvs_on_accept_cb g_on_accept = NULL;
+static kvs_on_msg_cb g_on_msg = NULL;
+static kvs_on_send_cb g_on_send = NULL;
+static kvs_on_close_cb g_on_close = NULL;
+
 static inline void _kvs_net_create_buffer(struct kvs_network_s *network, struct kvs_conn_s *conn) {
     if(conn == NULL) return;
     if(conn->r_buffer != NULL || conn->s_buffer != NULL) {
@@ -110,19 +115,19 @@ static void _kvs_net_remove_pending(struct kvs_network_s *net, struct kvs_conn_s
 }
 
 static int _kvs_net_process_buffer(struct kvs_conn_s *conn) {
-    if(conn == NULL || conn->_internal.net == NULL || conn->_internal.net->on_msg == NULL) {
+    if(conn == NULL || conn->_internal.net == NULL || g_on_msg == NULL) {
         return KVS_ERR;
     }
 
     int read_size = 0;
-    int status = conn->_internal.net->on_msg(conn, &read_size);
+    int status = g_on_msg(conn, &read_size);
     if (read_size < 0 || read_size > conn->r_idx) {
         LOG_FATAL("invalid read_size: %d, r_idx: %d", read_size, conn->r_idx);
         assert(0);
         read_size = conn->r_idx;
     }
     if(KVS_QUIT == status) {
-        conn->_internal.net->on_close(conn);
+        g_on_close(conn);
         close(conn->_internal.fd);
         _kvs_net_deinit_conn(conn->_internal.net, conn);
         kvs_net_release_conn(conn->_internal.net, conn);
@@ -238,7 +243,7 @@ static void _net_on_write(void *ctx, int res, int flags) {
             return; // already closed
         }
         // 关闭逻辑：归还连接池，从 Loop 注销
-        conn->_internal.net->on_close(conn); // notify upper layer
+        g_on_close(conn); // notify upper layer
         LOG_DEBUG("closing connection fd: %d", conn->_internal.fd);
         close(conn->_internal.fd);
         _kvs_net_deinit_conn(conn->_internal.net, conn);
@@ -255,8 +260,8 @@ static void _net_on_write(void *ctx, int res, int flags) {
         kvs_net_set_send_event_manual(conn);
     } else {
         // 全部发送完毕，调用业务层回调
-        if (conn->_internal.net->on_send) {
-            conn->_internal.net->on_send(conn, res);
+        if (g_on_send) {
+            g_on_send(conn, res);
         }
     }
 }
@@ -277,12 +282,12 @@ static void _net_on_read(void *ctx, int res, int flags) {
         if(conn->_internal.is_closed) {
             return; // already closed
         }
-        if(conn->_internal.net->on_close == NULL) {
+        if(g_on_close == NULL) {
             LOG_FATAL("on_close callback is NULL");
             assert(0);
         }
         //LOG_DEBUG("Read error or connection closed, res: %d:%s, closing fd: %d", res, strerror(-res), conn->_internal.fd);
-        conn->_internal.net->on_close(conn); // notify upper layer
+        g_on_close(conn); // notify upper layer
         //LOG_DEBUG("read error ", conn->_internal.)
         //LOG_DEBUG("closing connection fd: %d, res: %d", conn->_internal.fd, res);
         close(conn->_internal.fd);
@@ -368,7 +373,7 @@ static void _net_on_accept(void *ctx, int res, int flags) {
     //conn->type = KVS_CONN_TCP;
 
 
-    net->on_accept(conn); 
+    g_on_accept(conn); 
    
     // 4. 告诉 Loop：开始监听读
     kvs_net_set_recv_event(conn);
@@ -464,10 +469,10 @@ kvs_status_t kvs_net_init(struct kvs_network_s  *net, struct kvs_network_config_
     net->write_buffer_size = conf->write_buffer_size > 0 ? conf->write_buffer_size : KVS_WRITE_BUF_SZ_DEFAULT;
 
     net->server_ctx = conf->server_ctx;
-    net->on_accept = conf->on_accept;
-    net->on_msg = conf->on_msg;
-    net->on_send = conf->on_send;
-    net->on_close = conf->on_close;
+    g_on_accept = conf->on_accept;
+    g_on_msg = conf->on_msg;
+    g_on_send = conf->on_send;
+    g_on_close = conf->on_close;
     
     // 3. 启动监听 Socket
     net->server_fd = _kvs_net_init_server(conf->server_ip, conf->port_listen);

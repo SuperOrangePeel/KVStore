@@ -5,6 +5,7 @@
 #include "kvs_server.h"
 
 #include "kvs_persistence.h"
+#include "kvs_executor.h"
 #include "common.h"
 #include "kvs_types.h"
 #include "logger.h"
@@ -804,12 +805,6 @@ kvs_status_t _kvs_slave_cmd_logic(struct kvs_server_s *server, struct kvs_handle
         LOG_FATAL("server == NULL is %d, cmd == NULL is %d, conn == NULL is %d", server == NULL, cmd == NULL, conn == NULL);
         return KVS_ERR;
     }
-
-    struct kvs_protocol_s *protocol = &server->protocol;
-    if(protocol == NULL) {
-        LOG_FATAL("protocol is NULL in cmd logic");
-        return KVS_ERR;
-    }
     //if(cmd->cmd_type == KVS_CMD_READ)
     //LOG_DEBUG("Received replication command from master: %.*s", (int)cmd->len_cmd, cmd->cmd);
     if(server->slave != NULL && server->slave->slave_mode == 1) {
@@ -819,7 +814,7 @@ kvs_status_t _kvs_slave_cmd_logic(struct kvs_server_s *server, struct kvs_handle
     }
 
     // process command. Replication input never sends per-command responses.
-    kvs_result_t result = protocol->execute_command(server, cmd, conn);
+    kvs_result_t result = kvs_executor_cmd(server, cmd, conn);
     (void)result;
 
     return KVS_OK;

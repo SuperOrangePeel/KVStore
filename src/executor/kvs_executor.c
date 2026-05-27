@@ -13,8 +13,6 @@
 
 
 
-typedef kvs_result_t (*cmd_proc_t)(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn);
-
 kvs_result_t _kvs_exec_set(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
     if(server == NULL || cmd == NULL) {
         return KVS_RES_ERR;
@@ -182,53 +180,51 @@ kvs_result_t _kvs_exec_echo(struct kvs_server_s *server, struct kvs_handler_cmd_
     return KVS_RES_VAL;
 }
 
-// static cmd_proc_t command_table_test_redis[] = {
-//     [KVS_CMD_SET] = _kvs_exec_hset,
-//     [KVS_CMD_GET] = _kvs_exec_hget,
-//     [KVS_CMD_DEL] = _kvs_exec_hdel,
-//     [KVS_CMD_MOD] = _kvs_exec_hmod,
-//     [KVS_CMD_EXIST] = _kvs_exec_hexist,
-// };
-
-static cmd_proc_t command_table[] = {
-    [KVS_CMD_SET] = _kvs_exec_hset,
-    [KVS_CMD_GET] = _kvs_exec_hget,
-    [KVS_CMD_DEL] = _kvs_exec_hdel,
-    [KVS_CMD_MOD] = _kvs_exec_hmod,
-    [KVS_CMD_EXIST] = _kvs_exec_hexist,
-    // rbtree
-    [KVS_CMD_RSET] = _kvs_exec_rset,
-    [KVS_CMD_RGET] = _kvs_exec_rget,
-    [KVS_CMD_RDEL] = _kvs_exec_rdel,
-    [KVS_CMD_RMOD] = _kvs_exec_rmod,
-    [KVS_CMD_REXIST] = _kvs_exec_rexist,
-    // hash
-    [KVS_CMD_ASET] = _kvs_exec_set,
-    [KVS_CMD_AGET] = _kvs_exec_get,
-    [KVS_CMD_ADEL] = _kvs_exec_del,
-    [KVS_CMD_AMOD] = _kvs_exec_mod,
-    [KVS_CMD_AEXIST] = _kvs_exec_exist,
-    //save
-    [KVS_CMD_SAVE] = _kvs_exec_save,
-    //slave sync
-    [KVS_CMD_SLAVE_SYNC] = _kvs_exec_slave_sync,
-    [KVS_CMD_SLAVE_SYNC_RDMA] = _kvs_exec_slave_sync_rdma,
-    [KVS_CMD_ECHO] = _kvs_exec_echo
-};
-
 kvs_result_t kvs_executor_cmd(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
     if(cmd == NULL) return KVS_RES_ERR;
-    if(cmd->cmd_idx == KVS_CMD_INVALID) {
-        return KVS_RES_UNKNOWN_CMD;
-    }
-    if(cmd->cmd_idx < KVS_CMD_START || cmd->cmd_idx >= KVS_CMD_COUNT) {
-        return KVS_RES_ERR;
-    }
 
-    cmd_proc_t proc = command_table[cmd->cmd_idx];
-    if(proc == NULL) {
-        return KVS_RES_ERR;
+    switch(cmd->cmd_idx) {
+        case KVS_CMD_SET:
+            return _kvs_exec_hset(server, cmd, conn);
+        case KVS_CMD_GET:
+            return _kvs_exec_hget(server, cmd, conn);
+        case KVS_CMD_DEL:
+            return _kvs_exec_hdel(server, cmd, conn);
+        case KVS_CMD_MOD:
+            return _kvs_exec_hmod(server, cmd, conn);
+        case KVS_CMD_EXIST:
+            return _kvs_exec_hexist(server, cmd, conn);
+        case KVS_CMD_RSET:
+            return _kvs_exec_rset(server, cmd, conn);
+        case KVS_CMD_RGET:
+            return _kvs_exec_rget(server, cmd, conn);
+        case KVS_CMD_RDEL:
+            return _kvs_exec_rdel(server, cmd, conn);
+        case KVS_CMD_RMOD:
+            return _kvs_exec_rmod(server, cmd, conn);
+        case KVS_CMD_REXIST:
+            return _kvs_exec_rexist(server, cmd, conn);
+        case KVS_CMD_ASET:
+            return _kvs_exec_set(server, cmd, conn);
+        case KVS_CMD_AGET:
+            return _kvs_exec_get(server, cmd, conn);
+        case KVS_CMD_ADEL:
+            return _kvs_exec_del(server, cmd, conn);
+        case KVS_CMD_AMOD:
+            return _kvs_exec_mod(server, cmd, conn);
+        case KVS_CMD_AEXIST:
+            return _kvs_exec_exist(server, cmd, conn);
+        case KVS_CMD_SAVE:
+            return _kvs_exec_save(server, cmd, conn);
+        case KVS_CMD_SLAVE_SYNC:
+            return _kvs_exec_slave_sync(server, cmd, conn);
+        case KVS_CMD_SLAVE_SYNC_RDMA:
+            return _kvs_exec_slave_sync_rdma(server, cmd, conn);
+        case KVS_CMD_ECHO:
+            return _kvs_exec_echo(server, cmd, conn);
+        case KVS_CMD_INVALID:
+            return KVS_RES_UNKNOWN_CMD;
+        default:
+            return KVS_RES_ERR;
     }
-    
-    return proc(server, cmd, conn);
 }

@@ -7,9 +7,32 @@
 #include <stdatomic.h>
 #include <time.h>
 
+#if KVS_USE_JEMALLOC
+#include <jemalloc/jemalloc.h>
+#include <stdbool.h>
+
+/*
+ * Reduce the retention window for unused pages.  Background purging is
+ * enabled at runtime; jemalloc documents runtime control as the safe path.
+ */
+const char *malloc_conf =
+    "dirty_decay_ms:1000,muzzy_decay_ms:1000";
+
+static void kvs_jemalloc_enable_background_purge(void) {
+	bool enabled = true;
+	int ret = mallctl("background_thread", NULL, NULL, &enabled, sizeof(enabled));
+	if (ret != 0) {
+		LOG_WARN("failed to enable jemalloc background purge: %d", ret);
+	}
+}
+#endif
+
 static kvs_mp_pool_t kvs_mem_pool;
 
 void kvs_global_mempool_init() {
+#if KVS_USE_JEMALLOC
+	kvs_jemalloc_enable_background_purge();
+#endif
 #if KVS_MEM_POOL
     //printf("Memory pool enabled.\n");  
     LOG_INFO("Memory pool enabled.");
@@ -56,6 +79,34 @@ inline int kvs_parse_int(char* s, int length, int* offset) {
     *offset = i;
 	//printf("res:%d\n", res);
     return res;
+}
+
+inline int kvs_parse_int_resp(const char **p) {
+    const char *s = *p;
+
+    int v = s[0] - '0';
+
+    if (s[1] == '\r') {
+        *p = s + 3;
+        return v;
+    }
+
+    v = v * 10 + (s[1] - '0');
+
+    if (s[2] == '\r') {
+        *p = s + 4;
+        return v;
+    }
+
+    s += 2;
+
+    while (*s >= '0' && *s <= '9') {
+        v = v * 10 + (*s - '0');
+        ++s;
+    }
+
+    *p = s + 2;
+    return v;
 }
 
 inline uint64_t kvs_parse_uint64(char* s, int length, int* offset) {

@@ -6,6 +6,8 @@ bind_ip = "172.16.135.130"
 port = 2004
 # repl_backlog_size = 1048576
 # io_uring_entries = 1024
+io_uring_mode = "normal" # normal or sqpoll
+io_uring_sq_thread_idle = 2000 # milliseconds, only used by sqpoll
 
 # max_tcp_connections = 1024
 # tcp_recv_buf_size = 1048576

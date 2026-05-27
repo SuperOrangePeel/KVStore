@@ -4,7 +4,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#if KVS_USE_JEMALLOC
 #define KVS_MEM_POOL 0
+#else
+#define KVS_MEM_POOL 1
+#endif
 
 #define TIME_SUB_MS(tv1, tv2)  ((tv1.tv_sec - tv2.tv_sec) * 1000 + (tv1.tv_usec - tv2.tv_usec) / 1000)
 

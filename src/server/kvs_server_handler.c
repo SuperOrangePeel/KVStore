@@ -40,12 +40,27 @@ int kvs_handler_on_close(struct kvs_conn_s *conn) {
 	if(conn == NULL) return -1;
 	struct kvs_server_s* server = (struct kvs_server_s*)conn->server_ctx;
 	struct kvs_ctx_header_s* ctx_header = (struct kvs_ctx_header_s*)conn->header.user_data;
-	if(server == NULL) {
-		LOG_FATAL("server is NULL");
+	if(server == NULL || ctx_header == NULL) {
+		LOG_FATAL("invalid close context");
 		assert(0);
 		return KVS_ERR;
 	}
-	ctx_header->ops.on_close(conn);
+
+	switch(ctx_header->type) {
+		case KVS_CTX_NORMAL_CLIENT:
+			kvs_client_on_close(conn);
+			break;
+		case KVS_CTX_SLAVE_OF_ME:
+			kvs_my_slave_on_close(conn);
+			break;
+		case KVS_CTX_MASTER_OF_ME:
+			kvs_my_master_on_close(conn);
+			break;
+		default:
+			LOG_FATAL("invalid ctx type: %d", ctx_header->type);
+			assert(0);
+			return KVS_ERR;
+	}
 
 	kvs_server_deinit_connection(server, conn);
 	return 0;
@@ -62,23 +77,47 @@ int kvs_handler_on_msg(struct kvs_conn_s *conn, int *read_size) {
 		assert(0);
 		return KVS_ERR;
 	}
-	return ctx_header->ops.on_recv(conn, read_size);
+
+	switch(ctx_header->type) {
+		case KVS_CTX_NORMAL_CLIENT:
+			return kvs_client_on_recv(conn, read_size);
+		case KVS_CTX_SLAVE_OF_ME:
+			return kvs_my_slave_on_recv(conn, read_size);
+		case KVS_CTX_MASTER_OF_ME:
+			return kvs_my_master_on_recv(conn, read_size);
+		default:
+			LOG_FATAL("invalid ctx type: %d", ctx_header->type);
+			assert(0);
+			return KVS_ERR;
+	}
 }
 
 
 int kvs_handler_on_send(struct kvs_conn_s *conn, int bytes_sent) {
-	struct kvs_ctx_header_s* ctx_header = (struct kvs_ctx_header_s*)conn->header.user_data;
-	if(conn == NULL || ctx_header == NULL) {
-		if(conn == NULL)
-			LOG_FATAL("conn is NULL");
-		if(ctx_header == NULL)
-			LOG_FATAL("ctx_header is NULL");
+	if(conn == NULL) {
+		LOG_FATAL("conn is NULL");
 		assert(0);
 		return KVS_ERR;
 	}
-	return ctx_header->ops.on_send(conn, bytes_sent);
+	struct kvs_ctx_header_s* ctx_header = (struct kvs_ctx_header_s*)conn->header.user_data;
+	if(ctx_header == NULL) {
+		LOG_FATAL("ctx_header is NULL");
+		assert(0);
+		return KVS_ERR;
+	}
 
-    return 0;
+	switch(ctx_header->type) {
+		case KVS_CTX_NORMAL_CLIENT:
+			return kvs_client_on_send(conn, bytes_sent);
+		case KVS_CTX_SLAVE_OF_ME:
+			return kvs_my_slave_on_send(conn, bytes_sent);
+		case KVS_CTX_MASTER_OF_ME:
+			return kvs_my_master_on_send(conn, bytes_sent);
+		default:
+			LOG_FATAL("invalid ctx type: %d", ctx_header->type);
+			assert(0);
+			return KVS_ERR;
+	}
 }
 
 

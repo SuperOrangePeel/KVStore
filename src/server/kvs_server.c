@@ -10,6 +10,8 @@
 #include "kvs_types.h"
 #include "logger.h"
 #include "kvs_conn.h"
+#include "kvs_executor.h"
+#include "kvs_resp_protocol.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -113,12 +115,6 @@ int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *con
 		assert(0);
 	}
 	
-	// 5. init other components if needed
-	if(config_pt->protocol.protocol_parser == NULL || config_pt->protocol.execute_command == NULL) {
-		printf("protocol handlers are NULL\n");
-		assert(0);
-	}
-	server->protocol = config_pt->protocol;
     return 0;
 }
 
@@ -376,10 +372,6 @@ kvs_status_t kvs_server_create_conn_ctx(struct kvs_server_s *server, struct kvs_
 			//((struct kvs_client_context_s*)conn->user_data)->state = KVS_CLIENT_STATE_NORMAL;
 			struct kvs_client_context_s* cli_ctx = (struct kvs_client_context_s*)conn->user_data;
 			cli_ctx->state = KVS_CLIENT_STATE_NORMAL;
-			cli_ctx->header.ops.on_recv = kvs_client_on_recv;
-			cli_ctx->header.ops.on_send = kvs_client_on_send;
-			cli_ctx->header.ops.on_close = kvs_client_on_close;
-			cli_ctx->header.ops.name = "kvs_client_ops";
 			cli_ctx->header.conn = (struct kvs_conn_s *)conn;
 
 			break;
@@ -393,10 +385,6 @@ kvs_status_t kvs_server_create_conn_ctx(struct kvs_server_s *server, struct kvs_
 				//conn->user_data = (void*)ctx_header;
 				// ((struct kvs_my_slave_context_s*)conn->user_data)->state = KVS_MY_SLAVE_NONE;
 				slave_ctx->state = KVS_MY_SLAVE_NONE;
-				slave_ctx->header.ops.on_recv = kvs_my_slave_on_recv;
-				slave_ctx->header.ops.on_send = kvs_my_slave_on_send;
-				slave_ctx->header.ops.on_close = kvs_my_slave_on_close;
-				slave_ctx->header.ops.name = "kvs_my_slave_ops";
 				slave_ctx->ref_count = 1;
 				slave_ctx->slave_idx = -1; // will be assigned later
 				slave_ctx->master = server->master; // back reference to master
@@ -418,10 +406,6 @@ kvs_status_t kvs_server_create_conn_ctx(struct kvs_server_s *server, struct kvs_
 				master_ctx->header.type = KVS_CTX_MASTER_OF_ME;
 				//conn->user_data = (void*)master_ctx;
 				master_ctx->state = KVS_MY_MASTER_NONE;
-				master_ctx->header.ops.on_recv = kvs_my_master_on_recv;
-				master_ctx->header.ops.on_send = kvs_my_master_on_send;
-				master_ctx->header.ops.on_close = kvs_my_master_on_close;
-				master_ctx->header.ops.name = "kvs_my_master_ops";
 				master_ctx->slave = server->slave; // back reference to slave
 				master_ctx->header.conn = (struct kvs_conn_s *)conn;
 				conn->user_data = (void*)master_ctx;
@@ -530,11 +514,10 @@ static kvs_status_t _kvs_server_process_raw_buffer(struct kvs_server_s* server, 
 	if(buf == NULL || len <=0 || parsed_length == NULL) {
 		return -1;
 	}
-	struct kvs_protocol_s* proto = &server->protocol;
 	int parsed_length_once = 0;
 	struct kvs_handler_cmd_s cmd;
 	kvs_result_t result = 0;
-	kvs_status_t status = proto->protocol_parser(buf, 
+	kvs_status_t status = kvs_resp_parser(buf, 
 		len, &cmd, &parsed_length_once);
 	if(status == KVS_ERR) {
 		LOG_ERROR("protocol parse error");
@@ -548,7 +531,7 @@ static kvs_status_t _kvs_server_process_raw_buffer(struct kvs_server_s* server, 
 		// process command
 		//char *value_out = NULL;
 		//int len_val_out = 0;
-		result = proto->execute_command(server, &cmd, NULL);
+		result = kvs_executor_cmd(server, &cmd, NULL);
 		if(result == KVS_RES_ERR){
 			LOG_ERROR("execute command failed");
 			assert(0);
@@ -592,15 +575,13 @@ kvs_status_t kvs_server_msg_pump(struct kvs_conn_s *conn, int *read_size, kvs_cm
 	int parsed_len = 0;
 	int parsed_total_len = 0;
 	struct kvs_server_s* server = (struct kvs_server_s*)conn->server_ctx;
-	struct kvs_protocol_s *proto = &server->protocol;
-
 	char *r_buffer = conn->r_buffer;
 	int r_idx = conn->r_idx;
 
 	struct kvs_handler_cmd_s cmd;
 	while(parsed_total_len < conn->r_idx) {
 		memset(&cmd, 0, sizeof(struct kvs_handler_cmd_s));
-		kvs_status_t status = proto->protocol_parser(r_buffer + parsed_total_len, 
+		kvs_status_t status = kvs_resp_parser(r_buffer + parsed_total_len, 
 			r_idx - parsed_total_len, 
 			&cmd, 
 			&parsed_len);

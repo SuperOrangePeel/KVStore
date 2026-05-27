@@ -141,9 +141,6 @@ int start_server(int argc, char *argv[]) {
         .pers_config.rdb_filename = config.rdb_path,
         .pers_config.aof_fsync_policy = config.aof_fsync_policy, 
         .pers_config.aof_write_mode = config.aof_write_mode,
-        .protocol.protocol_parser = kvs_resp_parser,
-        .protocol.execute_command = kvs_executor_cmd,
-        .protocol.format_response = kvs_format_response,
         .use_rdma = 1,
         .rdma_max_chunk_size = config.rdma_max_chunk_size, 
     };

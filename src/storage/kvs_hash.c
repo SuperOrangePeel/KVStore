@@ -85,21 +85,34 @@ static int _hash(char *key, int size) {
 // }
 
 // DJB2 hash function 
-static unsigned int _hash_resp(char *key, int len_key, int size) {
+// static unsigned int _hash_resp(char *key, int len_key, int size) {
+//     if (!key) return 0;
+
+//     unsigned int hash = 5381; // 这是一个著名的初始魔数
+//     int i = 0;
+
+//     while (i < len_key) {
+//         // hash * 33 + key[i]
+//         // 使用位移 (hash << 5) + hash 代替乘法，速度极快
+//         hash = ((hash << 5) + hash) + key[i];
+//         i++;
+//     }
+
+//     // 优化点：如果 size 是 2 的幂，用 & (size - 1) 代替 % size
+//     return hash % size; 
+// }
+
+
+static inline unsigned int _hash_resp(const char *key, int len_key, int size) {
     if (!key) return 0;
 
-    unsigned int hash = 5381; // 这是一个著名的初始魔数
-    int i = 0;
+    unsigned int hash = 5381;
 
-    while (i < len_key) {
-        // hash * 33 + key[i]
-        // 使用位移 (hash << 5) + hash 代替乘法，速度极快
-        hash = ((hash << 5) + hash) + key[i];
-        i++;
+    for (int i = 0; i < len_key; ++i) {
+        hash = ((hash << 5) + hash) + (unsigned char)key[i];
     }
 
-    // 优化点：如果 size 是 2 的幂，用 & (size - 1) 代替 % size
-    return hash % size; 
+    return hash & (size - 1);
 }
 
 hashnode_t *_create_node(char *key, char *value) {
@@ -110,7 +123,7 @@ hashnode_t *_create_node(char *key, char *value) {
 #if ENABLE_KEY_POINTER
 	char *kcopy = kvs_malloc(strlen(key) + 1);
 	if (kcopy == NULL) return NULL;
-	memset(kcopy, 0, strlen(key) + 1);
+	//memset(kcopy, 0, strlen(key) + 1);
 	strncpy(kcopy, key, strlen(key));
 
 	node->key = kcopy;
@@ -120,7 +133,7 @@ hashnode_t *_create_node(char *key, char *value) {
 		kvs_free(kcopy, strlen(key) + 1);
 		return NULL;
 	}
-	memset(kvalue, 0, strlen(value) + 1);
+	//memset(kvalue, 0, strlen(value) + 1);
 	strncpy(kvalue, value, strlen(value));
 
 	node->value = kvalue;
@@ -141,7 +154,7 @@ hashnode_t *_create_node_resp(char *key, int len_key, char *value, int len_val) 
 	
 	char *kcopy = kvs_malloc(len_key);
 	if (kcopy == NULL) return NULL;
-	memset(kcopy, 0, len_key);
+	//memset(kcopy, 0, len_key);
 	memcpy(kcopy, key, len_key);
 
 	node->key = kcopy;
@@ -152,7 +165,7 @@ hashnode_t *_create_node_resp(char *key, int len_key, char *value, int len_val) 
 		kvs_free(kcopy, len_key);
 		return NULL;
 	}
-	memset(kvalue, 0, len_val);
+	//memset(kvalue, 0, len_val);
 	memcpy(kvalue, value, len_val);
 
 	node->value = kvalue;
@@ -277,7 +290,7 @@ int kvs_hash_mod(kvs_hash_t *hash, char *key, char *value) {
 
 	char *kvalue = kvs_malloc(strlen(value) + 1);
 	if (kvalue == NULL) return -2;
-	memset(kvalue, 0, strlen(value) + 1);
+	//memset(kvalue, 0, strlen(value) + 1);
 	strncpy(kvalue, value, strlen(value));
 
 	node->value = kvalue;
@@ -465,7 +478,7 @@ int kvs_hash_resp_mod(kvs_hash_t *hash, char *key, int len_key, char *value, int
 
 	char *kvalue = kvs_malloc(len_val);
 	if (kvalue == NULL) return -1;
-	memset(kvalue, 0, len_val);
+	//memset(kvalue, 0, len_val);
 	memcpy(kvalue, value, len_val);
 
 	node->value = kvalue;

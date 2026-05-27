@@ -3,7 +3,7 @@
 
 typedef struct hashtable_s kvs_hash_t;
 
-#define KVS_MAX_HASH_SIZE	5242880 // 1048576 // 1024 * 1024
+#define KVS_MAX_HASH_SIZE	(1 << 24)
 
 kvs_hash_t *kvs_hash_create(int size);
 void kvs_hash_destroy(kvs_hash_t *hash);
