@@ -37,6 +37,8 @@ else()
         -O3
         -Wall
         -Wextra
+        -g 
+        -fno-omit-frame-pointer
     )
 endif()
 

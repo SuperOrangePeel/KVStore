@@ -152,9 +152,9 @@ kvs_result_t kvs_server_hset(struct kvs_server_s *server, char* key, int len_key
 		return KVS_RES_ERR;
 	}
 	int ret = kvs_hash_resp_set(server->hash, key, len_key, value, len_val);
-	if(ret == -2) {
+	if(ret == 1) {
 		return KVS_RES_EXIST;
-	} else if(ret >= 0) {
+	} else if(ret == 0) {
 		return KVS_RES_OK;
 	} else {
 		return KVS_RES_ERR;

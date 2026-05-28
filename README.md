@@ -33,6 +33,19 @@ sudo rdma link add siw0 type siw netdev <网卡名>
 
 1. 单客户端 / 单线程
 ```shell
+redis-benchmark -h <ip> -p <port> -t set -n 5000000 -q -P <pipeline>
+```
+| Pipeline | Redis QPS            | Redis p50 | KVStore QPS          | KVStore p50 | KVStore / Redis |
+|----------|----------------------|-----------|----------------------|-------------|-----------------|
+| 1        | 48,600.31 req/s      | 1.007 ms  | 48,894.97 req/s      | 1.007 ms    | 1.01x           |
+| 10       | 446,787.59 req/s     | 1.127 ms  | 445,196.34 req/s     | 1.095 ms    | 1.00x           |
+| 20       | 838,785.44 req/s     | 1.119 ms  | 965,064.62 req/s     | 1.015 ms    | 1.15x           |
+| 40       | 880,902.00 req/s     | 1.959 ms  | 1,146,526.00 req/s   | 1.535 ms    | 1.30x           |
+| 80       | 1,402,524.50 req/s   | 2.295 ms  | 1,799,855.88 req/s   | 1.903 ms    | 1.28x           |
+| 160      | 1,786,990.62 req/s   | 3.687 ms  | 2,458,210.50 req/s   | 2.775 ms    | 1.38x           |
+
+2. 单客户端 / 单线程 / -r
+```shell
 # -r代表在1~keylen范围内随机key，如果不加入随机key，那么会一直插入同一个key
 redis-benchmark -h <ip> -p <port>  -t set -n 5000000 -q -r 5000000 -P 10
 ```

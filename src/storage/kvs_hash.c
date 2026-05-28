@@ -3,6 +3,7 @@
 
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -43,6 +44,7 @@ typedef struct hashtable_s {
 
 	int max_slots;
 	int count;
+	hashnode_t *last_resp_set;
 
 } hashtable_t;
 
@@ -103,16 +105,54 @@ static int _hash(char *key, int size) {
 // }
 
 
+static inline uint64_t _hash_read_u64(const char *ptr) {
+	uint64_t value;
+
+	memcpy(&value, ptr, sizeof(value));
+	return value;
+}
+
+static inline uint64_t _hash_mix_u64(uint64_t value) {
+	value ^= value >> 33;
+	value *= UINT64_C(0xff51afd7ed558ccd);
+	value ^= value >> 33;
+	value *= UINT64_C(0xc4ceb9fe1a85ec53);
+	value ^= value >> 33;
+	return value;
+}
+
 static inline unsigned int _hash_resp(const char *key, int len_key, int size) {
-    if (!key) return 0;
+	if (!key || len_key <= 0) return 0;
 
-    unsigned int hash = 5381;
+	uint64_t hash = UINT64_C(0x9e3779b97f4a7c15) ^ (uint64_t)(unsigned int)len_key;
 
-    for (int i = 0; i < len_key; ++i) {
-        hash = ((hash << 5) + hash) + (unsigned char)key[i];
-    }
+	if (len_key <= 8) {
+		uint64_t tail = 0;
+		memcpy(&tail, key, (size_t)len_key);
+		hash ^= tail;
+	} else if (len_key <= 16) {
+		hash ^= _hash_read_u64(key);
+		hash = _hash_mix_u64(hash);
+		hash ^= _hash_read_u64(key + len_key - 8);
+	} else {
+		const char *cursor = key;
+		int remaining = len_key;
 
-    return hash & (size - 1);
+		while (remaining >= 8) {
+			hash ^= _hash_read_u64(cursor);
+			hash = _hash_mix_u64(hash);
+			cursor += 8;
+			remaining -= 8;
+		}
+
+		if (remaining > 0) {
+			uint64_t tail = 0;
+			memcpy(&tail, cursor, (size_t)remaining);
+			hash ^= tail;
+		}
+	}
+
+	return (unsigned int)(_hash_mix_u64(hash) & (uint64_t)(size - 1));
 }
 
 hashnode_t *_create_node(char *key, char *value) {
@@ -186,7 +226,8 @@ kvs_hash_t *kvs_hash_create(int size) {
 	if (!hash->nodes) return NULL;
 
 	hash->max_slots = size;
-	hash->count = 0; 
+	hash->count = 0;
+	hash->last_resp_set = NULL;
 
 	return hash;
 }
@@ -313,6 +354,7 @@ int kvs_hash_del(kvs_hash_t *hash, char *key) {
 	if (strcmp(head->key, key) == 0) {
 		hashnode_t *tmp = head->next;
 		hash->nodes[idx] = tmp;
+		if (hash->last_resp_set == head) hash->last_resp_set = NULL;
 		kvs_free(head->key, head->len_key);
 		kvs_free(head->value, head->len_val);
 		kvs_free(head, sizeof(hashnode_t));
@@ -335,6 +377,7 @@ int kvs_hash_del(kvs_hash_t *hash, char *key) {
 
 	hashnode_t *tmp = cur->next;
 	cur->next = tmp->next;
+	if (hash->last_resp_set == tmp) hash->last_resp_set = NULL;
 #if ENABLE_KEY_POINTER
 	kvs_free(tmp->key, tmp->len_key);
 	kvs_free(tmp->value, tmp->len_val);
@@ -357,29 +400,68 @@ int kvs_hash_exist(kvs_hash_t *hash, char *key) {
 }
 
 /*
- *@return >=0 success -1 error -2 exist
+ * @return  0 success insert
+ * @return  1 success overwrite
+ * @return -1 error
  */
-int kvs_hash_resp_set(kvs_hash_t *hash, char *key, int len_key, char *value, int len_val) {
-
-	if (!hash || !key || !value || len_key <=0 || len_val <=0) return -1;
-
-	int idx = _hash_resp(key, len_key, KVS_MAX_HASH_SIZE);
-	hashnode_t *node = hash->nodes[idx];
-	while(node != NULL) {
-		if (node->len_key == len_key && memcmp(node->key, key, len_key) == 0) {
-			return -2;
-		}
-		node = node->next;
+static inline int _overwrite_resp_node(hashnode_t *node, char *value, int len_val) {
+	if (node->len_val >= len_val) {
+		memcpy(node->value, value, (size_t)len_val);
+		node->len_val = len_val;
+		return 1;
 	}
 
-	hashnode_t *new_node = _create_node_resp(key, len_key, value, len_val);
-	new_node->next = hash->nodes[idx];
-	hash->nodes[idx] = new_node;
+	char *new_value = kvs_malloc((size_t)len_val);
+	if (!new_value) return -1;
 
-	hash->count ++;
+	memcpy(new_value, value, (size_t)len_val);
+	kvs_free(node->value, (size_t)node->len_val);
+	node->value = new_value;
+	node->len_val = len_val;
+	return 1;
+}
 
-	return 0;
-	
+int kvs_hash_resp_set(kvs_hash_t *hash,
+                    char *key, int len_key,
+                	char *value, int len_val) {
+    if (!hash || !key || !value || len_key <= 0 || len_val <= 0) {
+        return -1;
+    }
+
+    hashnode_t *node = hash->last_resp_set;
+    if (node != NULL && node->len_key == len_key &&
+        memcmp(node->key, key, (size_t)len_key) == 0) {
+        return _overwrite_resp_node(node, value, len_val);
+    }
+
+    int idx = _hash_resp(key, len_key, KVS_MAX_HASH_SIZE);
+    node = hash->nodes[idx];
+
+    while (node != NULL) {
+        if (node->len_key == len_key &&
+            memcmp(node->key, key, (size_t)len_key) == 0) {
+
+            hash->last_resp_set = node;
+            return _overwrite_resp_node(node, value, len_val);
+        }
+
+        node = node->next;
+    }
+
+    /*
+     * key 不存在：插入新节点
+     */
+    hashnode_t *new_node = _create_node_resp(key, len_key, value, len_val);
+    if (!new_node) {
+        return -1;
+    }
+
+    new_node->next = hash->nodes[idx];
+    hash->nodes[idx] = new_node;
+    hash->count++;
+    hash->last_resp_set = new_node;
+
+    return 0;
 }
 
 /*
@@ -421,6 +503,7 @@ int kvs_hash_resp_del(kvs_hash_t *hash, char *key, int len_key) {
 	if (head->len_key == len_key && memcmp(head->key, key, len_key) == 0) {
 		hashnode_t *tmp = head->next;
 		hash->nodes[idx] = tmp;
+		if (hash->last_resp_set == head) hash->last_resp_set = NULL;
 
 		kvs_free(head->key, head->len_key);
 		kvs_free(head->value, head->len_val);
@@ -441,6 +524,7 @@ int kvs_hash_resp_del(kvs_hash_t *hash, char *key, int len_key) {
 
 	hashnode_t *tmp = cur->next;
 	cur->next = tmp->next;
+	if (hash->last_resp_set == tmp) hash->last_resp_set = NULL;
 	
 	kvs_free(tmp->key, tmp->len_key);
 	kvs_free(tmp->value, tmp->len_val);

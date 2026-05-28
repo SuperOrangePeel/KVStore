@@ -139,7 +139,8 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
         return KVS_OK;
     }
 
-    if((cmd->cmd_type & KVS_CMD_WRITE) &&
+    if(server->pers_ctx->aof_enabled &&
+       (cmd->cmd_type & KVS_CMD_WRITE) &&
        kvs_persistence_aof_should_backpressure(server->pers_ctx, (size_t)cmd->raw_len)) {
         kvs_net_pending_conn(conn);
         return KVS_AGAIN;
@@ -155,11 +156,14 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
         }
 
         if(server->pers_ctx->rdb_policy > 0) server->write_command_count++;
-        if(kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len) < 0) {
+        if(server->pers_ctx->aof_enabled &&
+           kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len) < 0) {
             LOG_ERROR("append AOF failed after command execution");
             return KVS_ERR;
         }
-        kvs_master_propagate_command_to_slaves(server->master, cmd);
+
+        if(server->role == KVS_SERVER_ROLE_MASTER && server->master->slave_count > 0)
+            kvs_master_propagate_command_to_slaves(server->master, cmd);
 
         if(server->pers_ctx->rdb_policy > 0 && server->write_command_count >= server->pers_ctx->rdb_policy && server->rdb_child_pid <= 0) {
             if(server->rdb_child_pid > 0) {
