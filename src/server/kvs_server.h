@@ -35,6 +35,7 @@ struct hashtable_s;
 struct kvs_array_s;
 struct _rbtree;
 struct kvs_pers_context_s;
+struct kvs_expire_table_s;
 struct io_uring;
 struct ibv_mr;
 
@@ -316,6 +317,7 @@ struct kvs_server_s {
     struct hashtable_s *hash;
     struct kvs_array_s *array;
     struct _rbtree *rbtree;
+    struct kvs_expire_table_s *expires;
 
     struct kvs_master_s* master;
     struct kvs_slave_s* slave;
@@ -329,6 +331,8 @@ struct kvs_server_s {
 
     struct kvs_event_s aof_timer_ev;    
     struct __kernel_timespec aof_ts;
+    struct kvs_event_s expire_timer_ev;
+    struct __kernel_timespec expire_ts;
 
 
 
@@ -376,6 +380,7 @@ kvs_result_t kvs_server_rdel(struct kvs_server_s *server, char* key, int len_key
 kvs_result_t kvs_server_rmod(struct kvs_server_s *server, char* key, int len_key, char* value, int len_val) ;
 kvs_result_t kvs_server_rexist(struct kvs_server_s *server, char* key, int len_key) ;
 kvs_result_t kvs_server_hset(struct kvs_server_s *server, char* key, int len_key, char* value, int len_val) ;
+kvs_result_t kvs_server_hsetex(struct kvs_server_s *server, char* key, int len_key, char* value, int len_val, unsigned long long ttl_seconds);
 kvs_result_t kvs_server_hget(struct kvs_server_s *server, char* key, int len_key, char** value_out, int* len_val_out) ;
 kvs_result_t kvs_server_hdel(struct kvs_server_s *server, char* key, int len_key) ;
 kvs_result_t kvs_server_hmod(struct kvs_server_s *server, char* key, int len_key, char* value, int len_val) ;
@@ -429,6 +434,7 @@ int kvs_server_init_signals(struct kvs_server_s *server);
 int kvs_server_on_rdb_save_finish(struct kvs_server_s *server, kvs_status_t status);
 int kvs_server_load_rdb(struct kvs_server_s *server);
 kvs_status_t kvs_server_init_aof_timer(struct kvs_server_s *server) ;
+kvs_status_t kvs_server_init_expire_timer(struct kvs_server_s *server);
 
 
 kvs_status_t kvs_master_remove_slave(struct kvs_master_s *master, struct kvs_conn_s *conn);

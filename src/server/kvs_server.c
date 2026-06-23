@@ -1,6 +1,7 @@
 #include "kvs_server.h"
 #include "kvs_array.h"
 #include "kvs_hash.h"
+#include "kvs_expire.h"
 #include "kvs_network.h"
 #include "kvs_rbtree.h"
 #include "kvs_persistence.h"
@@ -82,6 +83,11 @@ int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *con
 	}
 	server->hash = kvs_hash_create(KVS_MAX_HASH_SIZE);
 	server->rbtree = kvs_rbtree_create();
+	server->expires = kvs_expire_create(4096);
+	if(server->expires == NULL) {
+		return -1;
+	}
+	kvs_server_init_expire_timer(server);
 
 	// 4. init master/slave according to config
 	if(config_pt->role & KVS_SERVER_ROLE_MASTER) {
@@ -131,6 +137,11 @@ int kvs_server_deinit(struct kvs_server_s *server) {
 	if(server->array) {
 		kvs_array_destroy(server->array);
 		server->array = NULL;
+	}
+
+	if(server->expires) {
+		kvs_expire_destroy(server->expires);
+		server->expires = NULL;
 	}
 
 	if(server->hash) {

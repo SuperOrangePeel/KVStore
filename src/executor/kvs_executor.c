@@ -9,6 +9,8 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
+static kvs_result_t _kvs_exec_setex(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn);
 
 
 
@@ -184,6 +186,8 @@ kvs_result_t kvs_executor_cmd(struct kvs_server_s *server, struct kvs_handler_cm
     if(cmd == NULL) return KVS_RES_ERR;
 
     switch(cmd->cmd_idx) {
+        case KVS_CMD_SETEX:
+            return _kvs_exec_setex(server, cmd, conn);
         case KVS_CMD_SET:
             return _kvs_exec_hset(server, cmd, conn);
         case KVS_CMD_GET:
@@ -227,4 +231,32 @@ kvs_result_t kvs_executor_cmd(struct kvs_server_s *server, struct kvs_handler_cm
         default:
             return KVS_RES_ERR;
     }
+}
+
+static int kvs_parse_positive_ttl(const char *text, int length, unsigned long long *ttl) {
+    unsigned long long value = 0;
+    int i;
+    if(text == NULL || ttl == NULL || length <= 0) return -1;
+    for(i = 0; i < length; ++i) {
+        unsigned int digit;
+        if(text[i] < '0' || text[i] > '9') return -1;
+        digit = (unsigned int)(text[i] - '0');
+        if(value > (ULLONG_MAX - digit) / 10) return -1;
+        value = value * 10 + digit;
+    }
+    if(value == 0) return -1;
+    *ttl = value;
+    return 0;
+}
+
+static kvs_result_t _kvs_exec_setex(struct kvs_server_s *server,
+        struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
+    unsigned long long ttl;
+    (void)conn;
+    if(server == NULL || cmd == NULL || cmd->argc != 4 ||
+       kvs_parse_positive_ttl(cmd->ttl, cmd->len_ttl, &ttl) < 0) {
+        return KVS_RES_ERR;
+    }
+    return kvs_server_hsetex(server, cmd->key, cmd->len_key,
+            cmd->val, cmd->len_val, ttl);
 }

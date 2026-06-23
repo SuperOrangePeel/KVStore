@@ -2,6 +2,7 @@
 #include "kvs_array.h"
 #include "kvs_hash.h"
 #include "kvs_rbtree.h"
+#include "kvs_expire.h"
 #include "logger.h"
 
 
@@ -152,6 +153,9 @@ kvs_result_t kvs_server_hset(struct kvs_server_s *server, char* key, int len_key
 		return KVS_RES_ERR;
 	}
 	int ret = kvs_hash_resp_set(server->hash, key, len_key, value, len_val);
+	if(ret >= 0) {
+		kvs_expire_remove(server->expires, key, len_key);
+	}
 	if(ret == 1) {
 		return KVS_RES_EXIST;
 	} else if(ret == 0) {
@@ -164,6 +168,10 @@ kvs_result_t kvs_server_hset(struct kvs_server_s *server, char* key, int len_key
 kvs_result_t kvs_server_hget(struct kvs_server_s *server,  char* key, int len_key, char** value_out, int* len_val_out) {
 	if(server == NULL || key == NULL || len_key <=0 || value_out == NULL || len_val_out == NULL) {
 		return KVS_RES_ERR;
+	}
+	if(kvs_expire_is_expired(server->expires, key, len_key)) {
+		kvs_server_hdel(server, key, len_key);
+		return KVS_RES_NOT_FOUND;
 	}
 	int ret = kvs_hash_resp_get(server->hash, key, len_key, value_out, len_val_out);
 	if(ret == -2) {
@@ -179,6 +187,7 @@ kvs_result_t kvs_server_hdel(struct kvs_server_s *server, char* key, int len_key
 	if(server == NULL || key == NULL || len_key <=0) {
 		return KVS_RES_ERR;
 	}
+	kvs_expire_remove(server->expires, key, len_key);
 	int ret = kvs_hash_resp_del(server->hash, key, len_key);
 	if(ret == -2) {
 		return KVS_RES_NOT_FOUND;
@@ -192,6 +201,10 @@ kvs_result_t kvs_server_hdel(struct kvs_server_s *server, char* key, int len_key
 kvs_result_t kvs_server_hmod(struct kvs_server_s *server, char* key, int len_key, char* value, int len_val) {
 	if(server == NULL || key == NULL || len_key <=0 || value == NULL || len_val <=0) {
 		return KVS_RES_ERR;
+	}
+	if(kvs_expire_is_expired(server->expires, key, len_key)) {
+		kvs_server_hdel(server, key, len_key);
+		return KVS_RES_NOT_FOUND;
 	}
 	int ret = kvs_hash_resp_mod(server->hash, key, len_key, value, len_val);
 	if (ret == -2) {
@@ -207,6 +220,10 @@ kvs_result_t kvs_server_hexist(struct kvs_server_s *server, char* key, int len_k
 	if(server == NULL || key == NULL || len_key <=0) {
 		return KVS_RES_ERR;
 	}
+	if(kvs_expire_is_expired(server->expires, key, len_key)) {
+		kvs_server_hdel(server, key, len_key);
+		return KVS_RES_NOT_FOUND;
+	}
 	int ret = kvs_hash_resp_exist(server->hash, key, len_key);
 	if (ret >= 0) {
 		return KVS_RES_EXIST;
@@ -215,4 +232,16 @@ kvs_result_t kvs_server_hexist(struct kvs_server_s *server, char* key, int len_k
 	} else {
 		return KVS_RES_ERR;
 	}
+}
+kvs_result_t kvs_server_hsetex(struct kvs_server_s *server, char* key, int len_key,
+        char* value, int len_val, unsigned long long ttl_seconds) {
+    int ret;
+    if(server == NULL || key == NULL || len_key <= 0 || value == NULL || len_val <= 0 || ttl_seconds == 0) {
+        return KVS_RES_ERR;
+    }
+    ret = kvs_hash_resp_set(server->hash, key, len_key, value, len_val);
+    if(ret < 0 || kvs_expire_set(server->expires, key, len_key, ttl_seconds) < 0) {
+        return KVS_RES_ERR;
+    }
+    return KVS_RES_OK;
 }

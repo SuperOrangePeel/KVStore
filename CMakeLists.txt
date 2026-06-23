@@ -79,6 +79,7 @@ set(KVSTORE_SOURCES
     src/server/kvs_server_timer.c
 
     src/storage/kvs_array.c
+    src/storage/kvs_expire.c
     src/storage/kvs_hash.c
     src/storage/kvs_rbtree.c
 

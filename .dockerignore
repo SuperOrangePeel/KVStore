@@ -1,0 +1,9 @@
+.git
+build
+cmake-build-*
+test_slave
+*.aof
+*.rdb
+*.perf
+*.svg
+perf.user.data*

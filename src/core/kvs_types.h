@@ -62,6 +62,7 @@ typedef enum {
 	KVS_CMD_START = 0,
 	// hash
 	KVS_CMD_SET = KVS_CMD_START,
+	KVS_CMD_SETEX,
 	KVS_CMD_GET,
 	KVS_CMD_DEL,
 	KVS_CMD_MOD,
@@ -106,6 +107,9 @@ struct kvs_handler_cmd_s {
 	int len_key;
 	char* val;
 	int len_val;
+	char* ttl;
+	int len_ttl;
+	int argc;
 };
 
 /* ===========================STATE MACHINE EVENT TRIGGERS=================================================== */

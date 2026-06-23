@@ -8,3 +8,5 @@ test_slave/kvstore
 build_jemalloc
 build_malloc
 analysis
+kvstore.*
+perf.user.*

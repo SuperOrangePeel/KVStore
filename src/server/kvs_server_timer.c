@@ -2,6 +2,7 @@
 #include "kvs_network.h"
 #include "kvs_server.h"
 #include "kvs_types.h"
+#include "kvs_expire.h"
 #include "kvs_event_loop.h"
 
 #include <liburing.h>
@@ -53,5 +54,31 @@ kvs_status_t kvs_server_init_aof_timer(struct kvs_server_s *server) {
     
 
     kvs_loop_add_timeout(&server->loop, &server->aof_timer_ev, &server->aof_ts);
+    return KVS_OK;
+}
+static void kvs_server_expire_delete(char *key, int len_key, void *arg) {
+    struct kvs_server_s *server = (struct kvs_server_s *)arg;
+    if(server != NULL) {
+        kvs_server_hdel(server, key, len_key);
+    }
+}
+
+static void kvs_server_expire_timer_cb(void *ctx, int res, int flags) {
+    struct kvs_server_s *server = (struct kvs_server_s *)ctx;
+    (void)res;
+    (void)flags;
+    if(server == NULL) return;
+    kvs_expire_active_cycle(server->expires, 20, kvs_server_expire_delete, server);
+    kvs_loop_add_timeout(&server->loop, &server->expire_timer_ev, &server->expire_ts);
+}
+
+kvs_status_t kvs_server_init_expire_timer(struct kvs_server_s *server) {
+    if(server == NULL) return KVS_ERR;
+    server->expire_timer_ev.type = KVS_EV_TIMER;
+    server->expire_timer_ev.handler = kvs_server_expire_timer_cb;
+    server->expire_timer_ev.ctx = server;
+    server->expire_ts.tv_sec = 0;
+    server->expire_ts.tv_nsec = 100000000;
+    kvs_loop_add_timeout(&server->loop, &server->expire_timer_ev, &server->expire_ts);
     return KVS_OK;
 }
