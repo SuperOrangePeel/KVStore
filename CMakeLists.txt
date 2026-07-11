@@ -82,6 +82,7 @@ set(KVSTORE_SOURCES
     src/storage/kvs_expire.c
     src/storage/kvs_hash.c
     src/storage/kvs_rbtree.c
+    src/storage/kvs_vector.c
 
     deps/tomlc99/toml.c
 )

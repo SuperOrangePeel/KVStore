@@ -5,6 +5,7 @@
 #include "kvs_network.h"
 #include "kvs_rbtree.h"
 #include "kvs_persistence.h"
+#include "kvs_vector.h"
 // #include "kvs_handler.h" // decoupling
 #include "common.h"
 #include "kvs_rdma_engine.h"
@@ -87,6 +88,10 @@ int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *con
 	if(server->expires == NULL) {
 		return -1;
 	}
+	server->vector_store = kvs_vector_store_create(1024);
+	if(server->vector_store == NULL) {
+		return -1;
+	}
 	kvs_server_init_expire_timer(server);
 
 	// 4. init master/slave according to config
@@ -147,6 +152,11 @@ int kvs_server_deinit(struct kvs_server_s *server) {
 	if(server->hash) {
 		kvs_hash_destroy(server->hash);
 		server->hash = NULL;
+	}
+
+	if(server->vector_store) {
+		kvs_vector_store_destroy(server->vector_store);
+		server->vector_store = NULL;
 	}
 
 	if(server->rbtree) {

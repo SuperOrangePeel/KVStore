@@ -29,6 +29,12 @@ static const int command_type[] = {
 	[KVS_CMD_ADEL] = KVS_CMD_WRITE,
 	[KVS_CMD_AMOD] = KVS_CMD_WRITE,
 	[KVS_CMD_AEXIST] = KVS_CMD_READ,
+	// vector
+	[KVS_CMD_CREATEV] = KVS_CMD_WRITE,
+	[KVS_CMD_SETV] = KVS_CMD_WRITE,
+	[KVS_CMD_GETV] = KVS_CMD_READ,
+	[KVS_CMD_DELV] = KVS_CMD_WRITE,
+	[KVS_CMD_VINFO] = KVS_CMD_READ,
 	//save
 	[KVS_CMD_SAVE] = KVS_CMD_OTHER,
 	//slave sync
@@ -63,6 +69,9 @@ static inline int lookup_command(char *cmd, int len, kvs_command_type_t *type) {
 			char c2 = cmd_upper(cmd[2]);
 			char c3 = cmd_upper(cmd[3]);
 			if(c0 == 69 && c1 == 67 && c2 == 72 && c3 == 79) idx = KVS_CMD_ECHO;
+			else if(c0 == 83 && c1 == 69 && c2 == 84 && c3 == 86) idx = KVS_CMD_SETV;
+			else if(c0 == 71 && c1 == 69 && c2 == 84 && c3 == 86) idx = KVS_CMD_GETV;
+			else if(c0 == 68 && c1 == 69 && c2 == 76 && c3 == 86) idx = KVS_CMD_DELV;
 			else if(c0 == 83 && c1 == 65 && c2 == 86 && c3 == 69) idx = KVS_CMD_SAVE;
 			else if(c0 == 83 && c1 == 89 && c2 == 78 && c3 == 67) idx = KVS_CMD_SLAVE_SYNC;
 			else if((c0 == 82 || c0 == 65) && c1 == 83 && c2 == 69 && c3 == 84) idx = c0 == 82 ? KVS_CMD_RSET : KVS_CMD_ASET;
@@ -72,8 +81,12 @@ static inline int lookup_command(char *cmd, int len, kvs_command_type_t *type) {
 			break;
 		}
 		case 5:
-			if(cmd_upper(cmd[0]) == 69 && cmd_upper(cmd[1]) == 88 && cmd_upper(cmd[2]) == 73 && cmd_upper(cmd[3]) == 83 && cmd_upper(cmd[4]) == 84) idx = KVS_CMD_EXIST;
+			if(cmd_upper(cmd[0]) == 86 && cmd_upper(cmd[1]) == 73 && cmd_upper(cmd[2]) == 78 && cmd_upper(cmd[3]) == 70 && cmd_upper(cmd[4]) == 79) idx = KVS_CMD_VINFO;
+			else if(cmd_upper(cmd[0]) == 69 && cmd_upper(cmd[1]) == 88 && cmd_upper(cmd[2]) == 73 && cmd_upper(cmd[3]) == 83 && cmd_upper(cmd[4]) == 84) idx = KVS_CMD_EXIST;
 			else if(cmd_upper(cmd[0]) == 83 && cmd_upper(cmd[1]) == 69 && cmd_upper(cmd[2]) == 84 && cmd_upper(cmd[3]) == 69 && cmd_upper(cmd[4]) == 88) idx = KVS_CMD_SETEX;
+			break;
+		case 7:
+			if(cmd_upper(cmd[0]) == 67 && cmd_upper(cmd[1]) == 82 && cmd_upper(cmd[2]) == 69 && cmd_upper(cmd[3]) == 65 && cmd_upper(cmd[4]) == 84 && cmd_upper(cmd[5]) == 69 && cmd_upper(cmd[6]) == 86) idx = KVS_CMD_CREATEV;
 			break;
 		case 6: {
 			char c0 = cmd_upper(cmd[0]);
@@ -155,6 +168,12 @@ static inline kvs_set_fast_result_t try_parse_set_fast(char *msg, int length,
 	cmd_pt->cmd_idx = KVS_CMD_SET;
 	cmd_pt->cmd_type = KVS_CMD_WRITE;
 	cmd_pt->argc = 3;
+	cmd_pt->argv[0] = cmd_pt->cmd;
+	cmd_pt->argv_len[0] = cmd_pt->len_cmd;
+	cmd_pt->argv[1] = cmd_pt->key;
+	cmd_pt->argv_len[1] = cmd_pt->len_key;
+	cmd_pt->argv[2] = cmd_pt->val;
+	cmd_pt->argv_len[2] = cmd_pt->len_val;
 	*parsed_length = cmd_pt->raw_len;
 
 	return KVS_SET_FAST_OK;
@@ -193,6 +212,7 @@ kvs_status_t kvs_resp_parser(char* msg, int length, struct kvs_handler_cmd_s *cm
 	idx += 2;
 	//printf("%s:%d command parsering\n", __FILE__, __LINE__);
 	cmd_pt->argc = len_arr;
+	if(len_arr > KVS_CMD_MAX_ARGC) return KVS_ERR;
 	int i = 0;
 	for(; i < len_arr; ++ i) {
 		// $
@@ -213,6 +233,9 @@ kvs_status_t kvs_resp_parser(char* msg, int length, struct kvs_handler_cmd_s *cm
 		if(msg[idx] != '\r' || msg[idx + 1] != '\n') return KVS_ERR;
 		// printf("str:[%.*s], len:%d\n", len, str, len);
 		idx += 2;
+
+		cmd_pt->argv[i] = str;
+		cmd_pt->argv_len[i] = len;
 
 		if(0 == i) cmd_pt->cmd = str, cmd_pt->len_cmd = len;
 		else if(1 == i) cmd_pt->key = str, cmd_pt->len_key = len;

@@ -198,7 +198,7 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
 
     kvs_result_t result = kvs_executor_cmd(server, cmd, conn);
 
-    if(result == KVS_RES_RDB_SKIP_RESPONSE){
+    if(result == KVS_RES_SKIP_RESPONSE || result == KVS_RES_RDB_SKIP_RESPONSE){
 		return KVS_OK;
     }
     if(result == KVS_RES_SYNC_SLAVE) {
@@ -209,7 +209,7 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
     //     return KVS_OK; // do nothing for now
     // }
 
-    if(cmd->cmd_type & KVS_CMD_WRITE) {
+    if((cmd->cmd_type & KVS_CMD_WRITE) && result == KVS_RES_OK) {
         
         if( server->pers_ctx->rdb_policy > 0) server->write_command_count ++ ;
         //if(server->pers_ctx->aof_enabled) {

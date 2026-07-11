@@ -867,7 +867,12 @@ int _kvs_perisistence_load_rdb_filename_mmap(char* rdb_filename, kvs_rdb_item_lo
             fclose(fp);
             return -2;
         }
-        offset += processed_bytes;
+        if(processed_bytes == 0) {
+            munmap(mapped, file_size);
+            fclose(fp);
+            return -2;
+        }
+        offset += (size_t)processed_bytes;
     }
     munmap(mapped, file_size);
     fclose(fp);

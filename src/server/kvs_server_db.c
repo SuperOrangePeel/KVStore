@@ -245,3 +245,49 @@ kvs_result_t kvs_server_hsetex(struct kvs_server_s *server, char* key, int len_k
     }
     return KVS_RES_OK;
 }
+
+kvs_result_t kvs_server_createv(struct kvs_server_s *server, char *name, int len_name,
+        uint32_t dim, vec_metric_t metric, vec_index_type_t index_type) {
+    if(server == NULL || server->vector_store == NULL || name == NULL || len_name <= 0 || dim == 0) {
+        return KVS_RES_ERR;
+    }
+    return kvs_vector_createv(server->vector_store, name, len_name, dim, metric, index_type);
+}
+
+kvs_result_t kvs_server_setv(struct kvs_server_s *server, char *collection_name, int len_collection_name,
+        char *member, int len_member, const void *vector, int len_vector) {
+    if(server == NULL || server->vector_store == NULL || collection_name == NULL || len_collection_name <= 0 ||
+       member == NULL || len_member <= 0 || vector == NULL || len_vector <= 0) {
+        return KVS_RES_ERR;
+    }
+    return kvs_vector_setv(server->vector_store, collection_name, len_collection_name,
+            member, len_member, vector, len_vector);
+}
+
+kvs_result_t kvs_server_getv(struct kvs_server_s *server, char *collection_name, int len_collection_name,
+        const void *query_vector, int len_query_vector, uint32_t topk,
+        kvs_vector_search_result_t *results, uint32_t *result_count) {
+    if(server == NULL || server->vector_store == NULL || collection_name == NULL || len_collection_name <= 0 ||
+       query_vector == NULL || len_query_vector <= 0 || topk == 0 || results == NULL || result_count == NULL) {
+        return KVS_RES_ERR;
+    }
+    return kvs_vector_getv(server->vector_store, collection_name, len_collection_name,
+            query_vector, len_query_vector, topk, results, result_count);
+}
+
+kvs_result_t kvs_server_delv(struct kvs_server_s *server, char *collection_name, int len_collection_name,
+        char *member, int len_member) {
+    if(server == NULL || server->vector_store == NULL || collection_name == NULL || len_collection_name <= 0 ||
+       member == NULL || len_member <= 0) {
+        return KVS_RES_ERR;
+    }
+    return kvs_vector_delv(server->vector_store, collection_name, len_collection_name, member, len_member);
+}
+
+kvs_result_t kvs_server_vinfo(struct kvs_server_s *server, char *collection_name, int len_collection_name,
+        kvs_vector_info_t *info) {
+    if(server == NULL || server->vector_store == NULL || collection_name == NULL || len_collection_name <= 0 || info == NULL) {
+        return KVS_RES_ERR;
+    }
+    return kvs_vector_vinfo(server->vector_store, collection_name, len_collection_name, info);
+}

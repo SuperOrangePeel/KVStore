@@ -189,6 +189,14 @@ redis-benchmark -h <ip> -p <port>  -t set -n 5000000  -r 5000000 -q -P <pipeline
 | RDMA READ  | RDMA READ，1MiB chunk  | 4 GiB | 约 3161.44 MiB/s | 约 26.52 Gbit/s |
 | `ib_read_bw`  | RDMA READ，1MiB × 4096 | 4 GiB | 3161.43 MB/s | 25.29 Gbit/s |
 
+
+| **测试方式**         | **参数**                      | **平均吞吐**                 |
+| -------------------- | ----------------------------- | ---------------------------- |
+| `ib_read_bw`         | `-R --report_gbits -D 5`      | 25.90 Gb/s                   |
+| `ib_write_bw`        | `-R --report_gbits -D 5 -q 4` | 25.91 Gb/s                   |
+| TCP sendfile discard | 15 GiB 数据量                 | 3160.30 MiB/s，约 26.51 Gb/s |
+| TCP iperf3           | 单连接，10s                   | 26.2 Gb/s                    |
+
 #### 本地虚拟机
 测试环境说明：
 - 测试方式：两台虚拟机之间传输 `test_2g.dat`
@@ -266,3 +274,12 @@ $ ./test/test_hash <ip> <port> 1 500000
 ![image](./images/MONITOR.png)
 
 
+
+
+```shell
+CREATEV qa DIM 768 METRIC COSINE INDEX FLAT
+SETV qa answer:1001 FLOAT32 <3072 bytes vector> value <value>
+GETV qa FLOAT32 <3072 bytes query_vector> TOPK 5
+DELV qa answer:1001
+VINFO qa
+```

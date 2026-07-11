@@ -20,79 +20,150 @@
 #include <liburing.h>
 #include <assert.h>
 
+#include <stdint.h>
+
+typedef struct {
+    uint32_t dim;
+    uint32_t metric;
+    uint32_t index_type;
+} kvs_rdb_vector_meta_t;
+
+
 
 /*********************************loading rdb method **********************************/
 
 
 // also used in kvs_slave.c
 static int _kvs_server_restore_entry(struct kvs_server_s* server, int data_type, char* key, int len_key, char* value, int len_val) {
-	if(server == NULL || key == NULL || len_key <=0 || value == NULL || len_val <=0) {
-		return -1;
-	}
-	switch(data_type) {
-		case KVS_RDB_ARRAY:
-			return kvs_array_resp_set(server->array, key, len_key, value, len_val);
-		case KVS_RDB_RBTREE:
-			return kvs_rbtree_resp_set(server->rbtree, key, len_key, value, len_val);
-		case KVS_RDB_HASH:
-			return kvs_hash_resp_set(server->hash, key, len_key, value, len_val);
-		default:
-			return -1;
-	}
-	return 0;
+    if(server == NULL || key == NULL || len_key <=0 || value == NULL || len_val <=0) {
+        return -1;
+    }
+
+    switch(data_type) {
+        case KVS_RDB_ARRAY:
+            return kvs_array_resp_set(server->array, key, len_key, value, len_val);
+        case KVS_RDB_RBTREE:
+            return kvs_rbtree_resp_set(server->rbtree, key, len_key, value, len_val);
+        case KVS_RDB_HASH:
+            return kvs_hash_resp_set(server->hash, key, len_key, value, len_val);
+        case KVS_RDB_VECTOR_META: {
+            kvs_rdb_vector_meta_t meta;
+            kvs_result_t res;
+
+            if(len_val != (int)sizeof(meta) || server->vector_store == NULL) {
+                return -1;
+            }
+
+            memcpy(&meta, value, sizeof(meta));
+            res = kvs_vector_createv(server->vector_store, key, len_key,
+                                     meta.dim, (vec_metric_t)meta.metric,
+                                     (vec_index_type_t)meta.index_type);
+            return (res == KVS_RES_OK || res == KVS_RES_EXIST) ? 0 : -1;
+        }
+        case KVS_RDB_VECTOR_ITEM: {
+            int data_idx = 0;
+            int len_member = 0;
+            int len_vector = 0;
+            char *member;
+            char *vector;
+            kvs_result_t res;
+
+            if(server->vector_store == NULL || len_val < (int)(sizeof(int) * 2)) {
+                return -1;
+            }
+
+            memcpy(&len_member, value + data_idx, sizeof(int));
+            data_idx += (int)sizeof(int);
+            if(len_member <= 0 || data_idx + len_member + (int)sizeof(int) > len_val) {
+                return -1;
+            }
+
+            member = value + data_idx;
+            data_idx += len_member;
+
+            memcpy(&len_vector, value + data_idx, sizeof(int));
+            data_idx += (int)sizeof(int);
+            if(len_vector <= 0 || data_idx + len_vector != len_val) {
+                return -1;
+            }
+
+            vector = value + data_idx;
+            res = kvs_vector_setv(server->vector_store, key, len_key,
+                                  member, len_member, vector, len_vector);
+            return res == KVS_RES_OK ? 0 : -1;
+        }
+        default:
+            return -1;
+    }
+    return 0;
 }
 
 static int _kvs_server_rdb_item_loader(char* data, int len, void* arg) {
-	if(arg == NULL || data == NULL || len <= 0) {
-		return -1;
-	}
-	struct kvs_server_s* server = (struct kvs_server_s*)arg;
-	
-	if(len < sizeof(char) + sizeof(int)) {
-		return -1;
-	}
-	int data_idx = 0;
-	int processed_bytes = 0;
-	while(data_idx < len) {
-		processed_bytes = data_idx;
-		char data_type = data[data_idx];
-		data_idx += sizeof(char);
-		if(data_idx + sizeof(int) > len) {
-			break;
-		}
-		int len_key = 0;
-		memcpy(&len_key, data + data_idx, sizeof(int));
-		data_idx += sizeof(int);
-		if(len_key <=0) {
-			printf("%s:%d invalid len_key %d\n", __FILE__, __LINE__, len_key);
-			return -1;
-		}
-		if(data_idx + len_key + sizeof(int) > len) {
-			break;
-		}
-		char *key = data + data_idx;
-		data_idx += len_key;
-		int len_val = 0;
-		memcpy(&len_val, data + data_idx, sizeof(int));
-		data_idx += sizeof(int);
-		if(len_val <=0) {
-			printf("%s:%d invalid len_val %d\n", __FILE__, __LINE__, len_val);
-			return -1;
-		}
-		if(data_idx + len_val > len) {
-			break;
-		}
-		char *value = data + data_idx;
-		data_idx += len_val;
+    if(arg == NULL || data == NULL || len <= 0) {
+        return -1;
+    }
+    struct kvs_server_s* server = (struct kvs_server_s*)arg;
 
+    int data_idx = 0;
+    int processed_bytes = 0;
 
-		if(_kvs_server_restore_entry(server, data_type, key, len_key, value, len_val) < 0) {
-			return -1;
-		}
-	}
-	
-	
-	return processed_bytes;
+    while(data_idx < len) {
+        int item_start = data_idx;
+        int data_type;
+        int len_key = 0;
+        int len_val = 0;
+        char *key;
+        char *value;
+
+        if(data_idx + (int)sizeof(char) + (int)sizeof(int) > len) {
+            break;
+        }
+
+        data_type = (unsigned char)data[data_idx];
+        data_idx += (int)sizeof(char);
+        if(data_type < KVS_RDB_START || data_type >= KVS_RDB_END) {
+            LOG_ERROR("invalid RDB data_type %d at offset %d", data_type, item_start);
+            return -1;
+        }
+
+        memcpy(&len_key, data + data_idx, sizeof(int));
+        data_idx += (int)sizeof(int);
+        if(len_key <= 0) {
+            LOG_ERROR("invalid RDB len_key %d at offset %d", len_key, item_start);
+            return -1;
+        }
+        if(data_idx + len_key + (int)sizeof(int) > len) {
+            data_idx = item_start;
+            break;
+        }
+
+        key = data + data_idx;
+        data_idx += len_key;
+
+        memcpy(&len_val, data + data_idx, sizeof(int));
+        data_idx += (int)sizeof(int);
+        if(len_val <= 0) {
+            LOG_ERROR("invalid RDB len_val %d at offset %d", len_val, item_start);
+            return -1;
+        }
+        if(data_idx + len_val > len) {
+            data_idx = item_start;
+            break;
+        }
+
+        value = data + data_idx;
+        data_idx += len_val;
+
+        if(_kvs_server_restore_entry(server, data_type, key, len_key, value, len_val) < 0) {
+            LOG_ERROR("restore RDB item failed, data_type: %d, key_len: %d, val_len: %d",
+                    data_type, len_key, len_val);
+            return -1;
+        }
+
+        processed_bytes = data_idx;
+    }
+
+    return processed_bytes;
 }
 
 
@@ -108,8 +179,12 @@ int kvs_server_load_rdb(struct kvs_server_s *server) {
 		return KVS_ERR;
 	}
 
-	kvs_persistence_load_rdb(server->pers_ctx, _kvs_server_rdb_item_loader, server);
-	return 0;
+	int ret = kvs_persistence_load_rdb(server->pers_ctx, _kvs_server_rdb_item_loader, server);
+	if(ret != 0) {
+		LOG_ERROR("RDB recovery failed, file: %s, ret: %d", server->pers_ctx->rdb_filename, ret);
+		return KVS_ERR;
+	}
+	return KVS_OK;
 }
 
 /***********************************non-blocking async RDB save using io_uring************************************/
@@ -207,13 +282,23 @@ static int flush_buffer(struct _kvs_rdb_db_filter_arg *arg, int buf_idx, int for
     return 0;
 }
 
-int _kvs_rdb_db_filter(char *key, int len_key, char *value, int len_val, void* arg) {
-    struct _kvs_rdb_db_filter_arg* ctx = (struct _kvs_rdb_db_filter_arg*)arg;
-    if (ctx->ret != 0) return -1;
+static int _kvs_rdb_write_item_to_buffer(struct _kvs_rdb_db_filter_arg *ctx, int db_type,
+                                         char *key, int len_key, char *value, int len_val) {
+    if (ctx == NULL || ctx->ret != 0) return -1;
+    if (key == NULL || len_key <= 0 || value == NULL || len_val <= 0) {
+        ctx->ret = -1;
+        return -1;
+    }
 
     // 协议格式：[TYPE:1][KEY_LEN:4][KEY][VAL_LEN:4][VAL]
     size_t needed = 1 + 4 + len_key + 4 + len_val;
     rdb_buffer_t* cur_buf = &ctx->bufs[ctx->cur_buf_idx];
+
+    if (needed > RDB_BUF_SIZE) {
+        LOG_ERROR("single RDB item is too large: %zu", needed);
+        ctx->ret = -1;
+        return -1;
+    }
 
     // 如果空间不够，刷盘并切换
     if (cur_buf->pos + needed > RDB_BUF_SIZE) {
@@ -245,7 +330,7 @@ int _kvs_rdb_db_filter(char *key, int len_key, char *value, int len_val, void* a
 
     // 写入内存 Buffer
     char *p = cur_buf->data + cur_buf->pos;
-    *p++ = (char)ctx->db_type;
+    *p++ = (char)db_type;
     *(int*)p = len_key; p += 4;
     memcpy(p, key, len_key); p += len_key;
     *(int*)p = len_val; p += 4;
@@ -255,10 +340,71 @@ int _kvs_rdb_db_filter(char *key, int len_key, char *value, int len_val, void* a
     return 0;
 }
 
+int _kvs_rdb_db_filter(char *key, int len_key, char *value, int len_val, void* arg) {
+    struct _kvs_rdb_db_filter_arg* ctx = (struct _kvs_rdb_db_filter_arg*)arg;
+    return _kvs_rdb_write_item_to_buffer(ctx, ctx->db_type, key, len_key, value, len_val);
+}
+
+static int _kvs_rdb_vector_item_filter(vector_collection_t *collection,
+                                       char *member, int len_member,
+                                       const float *vector, uint32_t dim,
+                                       void *arg) {
+    struct _kvs_rdb_db_filter_arg* ctx = (struct _kvs_rdb_db_filter_arg*)arg;
+    int len_name;
+    int len_vector;
+    int len_val;
+    char *value;
+    char *p;
+    int ret;
+
+    if (collection == NULL || member == NULL || vector == NULL || ctx == NULL) return -1;
+
+    len_name = (int)strlen(collection->name);
+    len_vector = (int)(dim * sizeof(float));
+    len_val = (int)sizeof(int) + len_member + (int)sizeof(int) + len_vector;
+    value = (char *)malloc((size_t)len_val);
+    if (value == NULL) {
+        ctx->ret = -1;
+        return -1;
+    }
+
+    p = value;
+    memcpy(p, &len_member, sizeof(int)); p += sizeof(int);
+    memcpy(p, member, (size_t)len_member); p += len_member;
+    memcpy(p, &len_vector, sizeof(int)); p += sizeof(int);
+    memcpy(p, vector, (size_t)len_vector);
+
+    ret = _kvs_rdb_write_item_to_buffer(ctx, KVS_RDB_VECTOR_ITEM,
+                                        collection->name, len_name, value, len_val);
+    free(value);
+    return ret;
+}
+
+static int _kvs_rdb_vector_collection_filter(vector_collection_t *collection, void *arg) {
+    struct _kvs_rdb_db_filter_arg* ctx = (struct _kvs_rdb_db_filter_arg*)arg;
+    kvs_rdb_vector_meta_t meta;
+    int len_name;
+
+    if (collection == NULL || ctx == NULL) return -1;
+
+    len_name = (int)strlen(collection->name);
+    meta.dim = collection->dim;
+    meta.metric = (uint32_t)collection->metric;
+    meta.index_type = (uint32_t)collection->index_type;
+
+    if (_kvs_rdb_write_item_to_buffer(ctx, KVS_RDB_VECTOR_META,
+                                      collection->name, len_name,
+                                      (char *)&meta, (int)sizeof(meta)) != 0) {
+        return -1;
+    }
+
+    return kvs_vector_collection_foreach_item(collection, _kvs_rdb_vector_item_filter, ctx);
+}
+
+
 int kvs_rdb_child_process(struct kvs_server_s *server) {
 
     struct io_uring ring;
-    int ret = 0;
     
     if (io_uring_queue_init(4, &ring, 0) < 0) {
         LOG_ERROR("io_uring_queue_init failed");
@@ -296,6 +442,10 @@ int kvs_rdb_child_process(struct kvs_server_s *server) {
 
     arg.db_type = KVS_RDB_RBTREE; // RBTree
     kvs_rbtree_filter(server->rbtree, _kvs_rdb_db_filter, &arg);
+
+    if (server->vector_store != NULL) {
+        kvs_vector_store_foreach_collection(server->vector_store, _kvs_rdb_vector_collection_filter, &arg);
+    }
     
     // --- 遍历结束 ---
 
@@ -408,8 +558,6 @@ int kvs_server_on_rdb_save_finish(struct kvs_server_s *server, kvs_status_t stat
     server->rdb_child_pid = -1; // reset child pid
 
 
-    char *rdb_path = server->pers_ctx->rdb_filename;
-
     // // 1. 打开生成的 RDB 文件（为了发送）
     // // 注意：这里保存 fd，供后续发送使用
     // int rdb_fd = open(rdb_path, O_RDONLY);
@@ -442,6 +590,7 @@ typedef struct {
 	struct hashtable_s* hash;
 	struct _rbtree* rbtree;
 	struct kvs_array_s* array;
+	kvs_vector_store_t* vector_store;
 } server_dbs_t;
 
 typedef struct {
@@ -468,6 +617,64 @@ static int _kvs_server_storage_item_filter(char *key, int len_key, char *value, 
 	return 0;
 }
 
+static int _kvs_server_vector_item_filter(vector_collection_t *collection,
+                                          char *member, int len_member,
+                                          const float *vector, uint32_t dim,
+                                          void *arg) {
+	server_storage_item_filter_ctx_t* ctx = (server_storage_item_filter_ctx_t*)arg;
+	kvs_rdb_item_writer_pt writer = ctx->writer;
+	void* writer_ctx = ctx->writer_ctx;
+	char dt_char = (char)KVS_RDB_VECTOR_ITEM;
+	int len_name;
+	int len_vector;
+	int len_val;
+
+	if(collection == NULL || member == NULL || vector == NULL || writer == NULL) {
+		return -1;
+	}
+
+	len_name = (int)strlen(collection->name);
+	len_vector = (int)(dim * sizeof(float));
+	len_val = (int)sizeof(int) + len_member + (int)sizeof(int) + len_vector;
+
+	writer(&dt_char, sizeof(char), writer_ctx);
+	writer((char*)&len_name, sizeof(int), writer_ctx);
+	writer(collection->name, len_name, writer_ctx);
+	writer((char*)&len_val, sizeof(int), writer_ctx);
+	writer((char*)&len_member, sizeof(int), writer_ctx);
+	writer(member, len_member, writer_ctx);
+	writer((char*)&len_vector, sizeof(int), writer_ctx);
+	writer((char*)vector, len_vector, writer_ctx);
+	return 0;
+}
+
+static int _kvs_server_vector_collection_filter(vector_collection_t *collection, void *arg) {
+	server_storage_item_filter_ctx_t* ctx = (server_storage_item_filter_ctx_t*)arg;
+	kvs_rdb_item_writer_pt writer = ctx->writer;
+	void* writer_ctx = ctx->writer_ctx;
+	char dt_char = (char)KVS_RDB_VECTOR_META;
+	kvs_rdb_vector_meta_t meta;
+	int len_name;
+	int len_val = (int)sizeof(meta);
+
+	if(collection == NULL || writer == NULL) {
+		return -1;
+	}
+
+	len_name = (int)strlen(collection->name);
+	meta.dim = collection->dim;
+	meta.metric = (uint32_t)collection->metric;
+	meta.index_type = (uint32_t)collection->index_type;
+
+	writer(&dt_char, sizeof(char), writer_ctx);
+	writer((char*)&len_name, sizeof(int), writer_ctx);
+	writer(collection->name, len_name, writer_ctx);
+	writer((char*)&len_val, sizeof(int), writer_ctx);
+	writer((char*)&meta, len_val, writer_ctx);
+
+	return kvs_vector_collection_foreach_item(collection, _kvs_server_vector_item_filter, ctx);
+}
+
 
 static void _kvs_server_storage_item_iterator(void* iter_arg, kvs_rdb_item_writer_pt writer, void* writer_ctx) {
 
@@ -487,6 +694,13 @@ static void _kvs_server_storage_item_iterator(void* iter_arg, kvs_rdb_item_write
 			case KVS_RDB_RBTREE:
 				kvs_rbtree_filter(dbs->rbtree, _kvs_server_storage_item_filter, &ctx);
 				break;
+			case KVS_RDB_VECTOR_META:
+				if(dbs->vector_store != NULL) {
+					kvs_vector_store_foreach_collection(dbs->vector_store, _kvs_server_vector_collection_filter, &ctx);
+				}
+				break;
+			case KVS_RDB_VECTOR_ITEM:
+				break;
 			default:
 				assert(0);
 		}
@@ -505,6 +719,7 @@ int kvs_server_save_rdb(struct kvs_server_s *server) {
 	dbs.hash = server->hash;
 	dbs.rbtree = server->rbtree;
 	dbs.array = server->array;
+	dbs.vector_store = server->vector_store;
 	ret = kvs_persistence_save_rdb(server->pers_ctx,  _kvs_server_storage_item_iterator, &dbs);
 	if(ret != 0) {
 		printf("%s:%d save hash rdb failed\n", __FILE__, __LINE__);

@@ -815,6 +815,11 @@ kvs_status_t _kvs_slave_cmd_logic(struct kvs_server_s *server, struct kvs_handle
 
     // process command. Replication input never sends per-command responses.
     kvs_result_t result = kvs_executor_cmd(server, cmd, conn);
+
+    if(cmd->cmd_idx == KVS_CMD_SETV) {
+        printf("result: %d\n", result);
+    }
+
     (void)result;
 
     return KVS_OK;

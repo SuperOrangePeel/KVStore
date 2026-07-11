@@ -10,3 +10,9 @@ build_malloc
 analysis
 kvstore.*
 perf.user.*
+build*
+flamegraph.svg
+out.folded
+out.perf
+perf.data
+test_slave/dump.rdb

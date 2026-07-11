@@ -13,6 +13,7 @@
 #include "kvs_rdma_engine.h"
 #include "kvs_types.h"
 #include "kvs_persistence.h"
+#include "kvs_vector.h"
 
 #define ENABLE_ARRAY 1
 #define ENABLE_RBTREE 1
@@ -36,6 +37,7 @@ struct kvs_array_s;
 struct _rbtree;
 struct kvs_pers_context_s;
 struct kvs_expire_table_s;
+struct kvs_vector_store;
 struct io_uring;
 struct ibv_mr;
 
@@ -156,6 +158,8 @@ typedef enum {
 	KVS_RDB_ARRAY = 0,
 	KVS_RDB_RBTREE,
 	KVS_RDB_HASH,
+	KVS_RDB_VECTOR_META,
+	KVS_RDB_VECTOR_ITEM,
 	KVS_RDB_END
 } kvs_server_rdb_dbtype_t;
 
@@ -318,6 +322,7 @@ struct kvs_server_s {
     struct kvs_array_s *array;
     struct _rbtree *rbtree;
     struct kvs_expire_table_s *expires;
+    struct kvs_vector_store *vector_store;
 
     struct kvs_master_s* master;
     struct kvs_slave_s* slave;
@@ -385,6 +390,18 @@ kvs_result_t kvs_server_hget(struct kvs_server_s *server, char* key, int len_key
 kvs_result_t kvs_server_hdel(struct kvs_server_s *server, char* key, int len_key) ;
 kvs_result_t kvs_server_hmod(struct kvs_server_s *server, char* key, int len_key, char* value, int len_val) ;
 kvs_result_t kvs_server_hexist(struct kvs_server_s *server, char* key, int len_key) ;
+
+kvs_result_t kvs_server_createv(struct kvs_server_s *server, char *name, int len_name,
+        uint32_t dim, vec_metric_t metric, vec_index_type_t index_type);
+kvs_result_t kvs_server_setv(struct kvs_server_s *server, char *collection_name, int len_collection_name,
+        char *member, int len_member, const void *vector, int len_vector);
+kvs_result_t kvs_server_getv(struct kvs_server_s *server, char *collection_name, int len_collection_name,
+        const void *query_vector, int len_query_vector, uint32_t topk,
+        kvs_vector_search_result_t *results, uint32_t *result_count);
+kvs_result_t kvs_server_delv(struct kvs_server_s *server, char *collection_name, int len_collection_name,
+        char *member, int len_member);
+kvs_result_t kvs_server_vinfo(struct kvs_server_s *server, char *collection_name, int len_collection_name,
+        kvs_vector_info_t *info);
 
 
 

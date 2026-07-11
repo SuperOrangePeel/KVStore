@@ -34,6 +34,9 @@ kvs_status_t kvs_format_response(kvs_result_t result, char *value, int len_val, 
 			kvs_net_copy_msg_to_send_buf(conn, "\r\n", 2);
 			break;
 		}
+		case KVS_RES_SKIP_RESPONSE:
+		case KVS_RES_RDB_SKIP_RESPONSE:
+			break;
 		case KVS_RES_UNKNOWN_CMD:
 			kvs_net_copy_msg_to_send_buf(conn, "-ERR unknown command\r\n", sizeof("-ERR unknown command\r\n") - 1);
 			break;

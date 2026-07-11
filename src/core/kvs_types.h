@@ -51,6 +51,7 @@ typedef enum {
 
 	// special control status
 	KVS_RES_SYNC_SLAVE,
+	KVS_RES_SKIP_RESPONSE,
 	KVS_RES_RDB_SKIP_RESPONSE
 	
 } kvs_result_t;
@@ -79,6 +80,12 @@ typedef enum {
 	KVS_CMD_ADEL,
 	KVS_CMD_AMOD,
 	KVS_CMD_AEXIST,
+	// vector
+	KVS_CMD_CREATEV,
+	KVS_CMD_SETV,
+	KVS_CMD_GETV,
+	KVS_CMD_DELV,
+	KVS_CMD_VINFO,
 	//save
 	KVS_CMD_SAVE,
 	//slave sync
@@ -95,6 +102,8 @@ typedef enum {
 	KVS_CMD_OTHER = (1 << 2),
 } kvs_command_type_t;
 
+#define KVS_CMD_MAX_ARGC 16
+
 struct kvs_handler_cmd_s {
     kvs_command_t cmd_idx; // command index
 	kvs_command_type_t cmd_type; // 1: write command, 0: read command
@@ -110,6 +119,8 @@ struct kvs_handler_cmd_s {
 	char* ttl;
 	int len_ttl;
 	int argc;
+	char *argv[KVS_CMD_MAX_ARGC];
+	int argv_len[KVS_CMD_MAX_ARGC];
 };
 
 /* ===========================STATE MACHINE EVENT TRIGGERS=================================================== */
