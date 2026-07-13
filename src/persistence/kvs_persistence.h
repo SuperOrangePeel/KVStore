@@ -80,6 +80,7 @@ size_t kvs_persistence_aof_available(struct kvs_pers_context_s *ctx);
 int kvs_persistence_aof_should_backpressure(struct kvs_pers_context_s *ctx, size_t data_len);
 void kvs_persistence_before_sleep(struct kvs_pers_context_s *ctx);
 int kvs_persistence_load_aof(struct kvs_pers_context_s *aof_ctx, kvs_aof_data_parser_pt data_parser, void* arg);
+int kvs_persistence_mmap_load_aof(struct kvs_pers_context_s *aof_ctx, kvs_aof_data_parser_pt data_parser, void* arg);
 int kvs_persistence_flush_aof(struct kvs_pers_context_s *ctx);
 
 

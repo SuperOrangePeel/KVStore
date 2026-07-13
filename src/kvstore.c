@@ -9,6 +9,7 @@
 #include "kvs_executor.h"
 #include "kvs_response.h"
 #include "kvs_persistence.h"
+#include "kvs_qa.h"
 #include "echo.h"
 
 
@@ -142,8 +143,18 @@ int start_server(int argc, char *argv[]) {
         .pers_config.aof_fsync_policy = config.aof_fsync_policy, 
         .pers_config.aof_write_mode = config.aof_write_mode,
         .use_rdma = 1,
-        .rdma_max_chunk_size = config.rdma_max_chunk_size, 
+        .rdma_max_chunk_size = config.rdma_max_chunk_size,
+        .embedding_enabled = config.embedding_enabled,
+        .embedding_dim = config.embedding_dim,
+        .embedding_worker_threads = config.embedding_worker_threads,
+        .embedding_timeout_ms = config.embedding_timeout_ms,
+        .qa_auto_member_start = config.qa_auto_member_start,
     };
+    strncpy(server_config.embedding_server_path, config.embedding_server_path, sizeof(server_config.embedding_server_path) - 1);
+    strncpy(server_config.embedding_socket_path, config.embedding_socket_path, sizeof(server_config.embedding_socket_path) - 1);
+    strncpy(server_config.embedding_model, config.embedding_model, sizeof(server_config.embedding_model) - 1);
+    strncpy(server_config.qa_auto_member_prefix, config.qa_auto_member_prefix, sizeof(server_config.qa_auto_member_prefix) - 1);
+    strncpy(server_config.qa_auto_member_counter_key, config.qa_auto_member_counter_key, sizeof(server_config.qa_auto_member_counter_key) - 1);
 
     if(config.master_ip[0] == '\0') {
         // Master mode
@@ -152,6 +163,7 @@ int start_server(int argc, char *argv[]) {
 
         kvs_server_init(&global_server, &server_config);
         kvs_server_storage_recovery(&global_server); // recovery from AOF/RDB
+        kvs_qa_load_auto_id(&global_server);
         LOG_INFO("Start as Master");
     } else {
         // Slave mode

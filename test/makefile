@@ -13,7 +13,7 @@ all: $(EXES)
 
 # ------------- 单个文件编译规则 -------------
 %: %.c
-	$(CC) $(CFLAGS) $(INCFLAGS) $< -o $@ -luring
+	$(CC) $(CFLAGS) $(INCFLAGS) $< -o $@ -luring -pthread
 # ------------- 清理规则 -------------
 clean:
 	rm -rf $(EXES)  # 删除可执行文件

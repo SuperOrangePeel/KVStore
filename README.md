@@ -222,6 +222,66 @@ redis-benchmark -h <ip> -p <port>  -t set -n 5000000  -r 5000000 -q -P <pipeline
 | 1500 | 38.306 s | 53.46 MiB/s | 原始测试结果 |
 | 9000 | 38.824 s | 52.75 MiB/s | 调整 MTU 后结果 |
 
+### 向量
+
+#### 语义缓存 QPS 测试
+
+测试环境与方式：
+- 启动方式：`source build/bin/activate && cd build && ./kvstore /tmp/kvs_vector_qps.toml`
+- 功能测试命令：`../test/test_vector 127.0.0.1 23999`
+- QPS 测试命令：`../test/test_vector 127.0.0.1 23999 bench`
+- Embedding 模型：`Qwen/Qwen3-Embedding-0.6B`
+- 向量维度：512
+- Index：FLAT，Metric：COSINE
+- Embedding worker：2（串行 QPS 测试）；batch 测试可提高到 4
+- 测试方式：单连接、同步请求/响应，不使用 pipeline
+- Benchmark 前等待 `embedding_server` 完成模型加载和 warmup，避免首次推理污染 QPS
+- 每项请求数：20
+
+| 测试项 | 请求数 | 总耗时 | 平均延迟 | QPS | 说明 |
+|---|---:|---:|---:|---:|---|
+| SETQA | 20 | 7.464 s | 373.203 ms | 2.68 | `SETQA index ID member QUESTION question ANSWER answer`，包含文本 embedding、hash 写入、vector 写入 |
+| GETQA | 20 | 6.548 s | 327.404 ms | 3.05 | `GETQA index QUESTION question TOPK 5`，包含 query embedding、FLAT 向量检索、answer 读取 |
+
+测试输出：
+
+```text
+[BENCH] SETQA n=20 total=7.464s avg=373.203ms qps=2.68
+[BENCH] GETQA n=20 total=6.548s avg=327.404ms qps=3.05
+test_vector: all tests passed
+```
+
+#### Batch / GPU 说明
+
+当前实现中，单连接 pipeline 对 `SETQA/GETQA` 没有提速效果，因为这两个命令会 block 当前 client，后续 pipeline 命令需要等 embedding 完成后才继续处理。要测 batch，需要使用多连接并发，并由 `embedding_server.py` 在 Python 内部做 micro-batch，把多个请求合并为一次 `model.encode([...])`。
+
+本轮已经给 `embedding_server.py` 增加 micro-batch 队列：
+- 默认 `batch_size = 8`
+- 默认 `batch_wait_ms = 5`
+- C 侧协议不变，仍然是一请求一响应
+
+GPU 检查结果：当前测试环境无法使用 GPU。
+
+```text
+torch = 2.13.0+cu130
+torch.version.cuda = 13.0
+torch.cuda.is_available() = False
+torch.cuda.device_count() = 0
+nvidia-smi: command not found
+CUDA requested but torch.cuda.is_available() is false
+```
+
+因此本机无法给出真实 GPU QPS。后续如果机器上有 NVIDIA driver 和 `/dev/nvidia*`，可以这样强制使用 GPU：
+
+```bash
+source build/bin/activate
+export KVS_EMBEDDING_DEVICE=cuda
+cd build
+./kvstore /tmp/kvs_vector_qps.toml
+../test/test_vector 127.0.0.1 23999 bench
+```
+
+
 ### 内存池
 
 ```

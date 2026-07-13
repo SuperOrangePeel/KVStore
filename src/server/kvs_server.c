@@ -14,6 +14,7 @@
 #include "kvs_conn.h"
 #include "kvs_executor.h"
 #include "kvs_resp_protocol.h"
+#include "kvs_qa.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +93,9 @@ int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *con
 	if(server->vector_store == NULL) {
 		return -1;
 	}
+	if(kvs_qa_init(server, config_pt) != 0) {
+		LOG_WARN("kvs_qa_init failed, QA embedding commands will be unavailable");
+	}
 	kvs_server_init_expire_timer(server);
 
 	// 4. init master/slave according to config
@@ -133,6 +137,9 @@ int kvs_server_init(struct kvs_server_s *server, struct kvs_server_config_s *con
 int kvs_server_deinit(struct kvs_server_s *server) {
 	if(server == NULL) {
 		return -1;
+	}
+	if(server->embedding || server->qa) {
+		kvs_qa_deinit(server);
 	}
 	if(server->pers_ctx) {
 		kvs_persistence_destroy(server->pers_ctx);
@@ -527,7 +534,7 @@ kvs_status_t kvs_server_aof_recovery(struct kvs_server_s *server, kvs_server_cmd
 		return KVS_ERR;
 	}
 
-	kvs_persistence_load_aof(server->pers_ctx, _kvs_aof_data_parser, &adapter);
+	kvs_persistence_mmap_load_aof(server->pers_ctx, _kvs_aof_data_parser, &adapter);
 	return KVS_OK;
 }
 
@@ -553,6 +560,10 @@ static kvs_status_t _kvs_server_process_raw_buffer(struct kvs_server_s* server, 
 		//char *value_out = NULL;
 		//int len_val_out = 0;
 		result = kvs_executor_cmd(server, &cmd, NULL);
+		if(result == KVS_RES_BLOCKED) {
+			LOG_ERROR("blocked command is not allowed during recovery");
+			return KVS_ERR;
+		}
 		if(result == KVS_RES_ERR){
 			LOG_ERROR("execute command failed");
 			assert(0);
@@ -574,11 +585,13 @@ kvs_status_t kvs_server_storage_recovery(struct kvs_server_s *server) {
 		//return KVS_ERR;
 	} else {
 		LOG_INFO("AOF recovery completed.");
+		kvs_qa_load_auto_id(server);
 		return KVS_OK;
 	}
 
 	// 2. load RDB
 	ret = kvs_server_load_rdb(server);
+	kvs_qa_load_auto_id(server);
 	if(ret != KVS_OK) {
 		//LOG_ERROR("RDB recovery failed.");
 		//return KVS_ERR;

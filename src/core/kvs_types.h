@@ -52,7 +52,8 @@ typedef enum {
 	// special control status
 	KVS_RES_SYNC_SLAVE,
 	KVS_RES_SKIP_RESPONSE,
-	KVS_RES_RDB_SKIP_RESPONSE
+	KVS_RES_RDB_SKIP_RESPONSE,
+	KVS_RES_BLOCKED
 	
 } kvs_result_t;
 
@@ -86,6 +87,10 @@ typedef enum {
 	KVS_CMD_GETV,
 	KVS_CMD_DELV,
 	KVS_CMD_VINFO,
+	KVS_CMD_SETQA,
+	KVS_CMD_GETQA,
+	KVS_CMD_DELQA,
+	KVS_CMD_SETQA_APPLY,
 	//save
 	KVS_CMD_SAVE,
 	//slave sync
@@ -102,7 +107,7 @@ typedef enum {
 	KVS_CMD_OTHER = (1 << 2),
 } kvs_command_type_t;
 
-#define KVS_CMD_MAX_ARGC 16
+#define KVS_CMD_MAX_ARGC 32
 
 struct kvs_handler_cmd_s {
     kvs_command_t cmd_idx; // command index

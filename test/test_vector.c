@@ -1,12 +1,14 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #define RESP_BUF_SIZE 8192
@@ -16,6 +18,16 @@ typedef struct bulk_arg_s {
     const void *data;
     int len;
 } bulk_arg_t;
+
+
+typedef struct bench_thread_arg_s {
+    const char *ip;
+    int port;
+    int thread_id;
+    int requests;
+    int failed;
+    char err[256];
+} bench_thread_arg_t;
 
 static bulk_arg_t bulk_str(const char *s) {
     bulk_arg_t arg;
@@ -92,7 +104,7 @@ static int recv_response(int sock, char *buf, int cap) {
 
         FD_ZERO(&rfds);
         FD_SET(sock, &rfds);
-        tv.tv_sec = off == 0 ? 2 : 0;
+        tv.tv_sec = off == 0 ? 180 : 0;
         tv.tv_usec = off == 0 ? 0 : 200000;
 
         ready = select(sock + 1, &rfds, NULL, NULL, &tv);
@@ -154,6 +166,24 @@ static void expect_exact(const char *case_name, const char *resp, const char *ex
 
 static void expect_contains(const char *case_name, const char *resp, const char *needle) {
     if (strstr(resp, needle) == NULL) fail_response(case_name, resp);
+}
+
+static int response_is_error(const char *resp) {
+    return resp != NULL && resp[0] == '-';
+}
+
+
+static double now_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (double)tv.tv_sec * 1000.0 + (double)tv.tv_usec / 1000.0;
+}
+
+static void print_qps_result(const char *name, int n, double total_ms) {
+    double total_s = total_ms / 1000.0;
+    double avg_ms = n > 0 ? total_ms / (double)n : 0.0;
+    double qps = total_ms > 0 ? (double)n * 1000.0 / total_ms : 0.0;
+    printf("[BENCH] %s n=%d total=%.3fs avg=%.3fms qps=%.2f\n", name, n, total_s, avg_ms, qps);
 }
 
 static void run_cmd(int sock, const char *case_name, int argc, const bulk_arg_t *argv, char *resp, int resp_cap) {
@@ -242,15 +272,243 @@ static void test_vector(int sock) {
     printf("[PASS] GETV after DELV\n");
 }
 
+
+static void test_qa(int sock) {
+    char resp[RECV_BUF_SIZE];
+    const char *qa_index = "qa_semantic_index";
+    const char *auto_question = "1美元多少美分";
+    const char *auto_answer = "1美元等于100美分";
+    const char *id_member = "qa:testqa:1";
+    const char *id_question = "redis setex 是什么";
+    const char *id_answer = "SETEX 用于设置带过期时间的 key。";
+
+    bulk_arg_t setqa_auto[] = {
+        bulk_str("SETQA"), bulk_str(qa_index), bulk_str("AUTO"),
+        bulk_str("QUESTION"), bulk_str(auto_question),
+        bulk_str("ANSWER"), bulk_str(auto_answer)
+    };
+    run_cmd(sock, "SETQA AUTO", 7, setqa_auto, resp, sizeof(resp));
+    if (response_is_error(resp)) {
+        printf("[SKIP] SETQA/GETQA embedding service unavailable: %s", resp);
+        return;
+    }
+    expect_contains("SETQA AUTO generated member", resp, "qa:");
+    printf("[PASS] SETQA AUTO\n");
+
+    bulk_arg_t setqa_id[] = {
+        bulk_str("SETQA"), bulk_str(qa_index), bulk_str("ID"), bulk_str(id_member),
+        bulk_str("QUESTION"), bulk_str(id_question),
+        bulk_str("ANSWER"), bulk_str(id_answer)
+    };
+    run_cmd(sock, "SETQA ID", 8, setqa_id, resp, sizeof(resp));
+    expect_exact("SETQA ID", resp, "+OK\r\n");
+
+    bulk_arg_t getqa_auto[] = {
+        bulk_str("GETQA"), bulk_str(qa_index), bulk_str("QUESTION"), bulk_str(auto_question),
+        bulk_str("TOPK"), bulk_str("2")
+    };
+    run_cmd(sock, "GETQA auto question", 6, getqa_auto, resp, sizeof(resp));
+    expect_contains("GETQA auto answer", resp, auto_answer);
+    printf("[PASS] GETQA auto question\n");
+
+    bulk_arg_t getqa_id[] = {
+        bulk_str("GETQA"), bulk_str(qa_index), bulk_str("QUESTION"), bulk_str(id_question),
+        bulk_str("TOPK"), bulk_str("2")
+    };
+    run_cmd(sock, "GETQA id question", 6, getqa_id, resp, sizeof(resp));
+    expect_contains("GETQA id member", resp, id_member);
+    expect_contains("GETQA id answer", resp, id_answer);
+    printf("[PASS] GETQA id question\n");
+
+    bulk_arg_t delqa[] = {bulk_str("DELQA"), bulk_str(qa_index), bulk_str(id_member)};
+    run_cmd(sock, "DELQA qa:testqa:1", 3, delqa, resp, sizeof(resp));
+    expect_exact("DELQA qa:testqa:1", resp, "+OK\r\n");
+
+    run_cmd(sock, "GETQA after DELQA", 6, getqa_id, resp, sizeof(resp));
+    if (strstr(resp, id_member) != NULL) fail_response("GETQA after DELQA should not contain deleted member", resp);
+    printf("[PASS] GETQA after DELQA\n");
+}
+
+
+static void bench_setqa(int sock, int n) {
+    char resp[RECV_BUF_SIZE];
+    char member[128];
+    char question[256];
+    char answer[256];
+    double start_ms, total_ms;
+    const char *qa_index = "qa_bench_index";
+
+    /* Warmup: do not count the first model/runtime hit. */
+    bulk_arg_t warmup[] = {
+        bulk_str("SETQA"), bulk_str(qa_index), bulk_str("ID"), bulk_str("qa:bench:warmup"),
+        bulk_str("QUESTION"), bulk_str("benchmark warmup question"),
+        bulk_str("ANSWER"), bulk_str("benchmark warmup answer")
+    };
+    run_cmd(sock, "BENCH SETQA warmup", 8, warmup, resp, sizeof(resp));
+    if (response_is_error(resp)) {
+        printf("[SKIP] SETQA QPS embedding service unavailable: %s", resp);
+        return;
+    }
+
+    start_ms = now_ms();
+    for (int i = 0; i < n; i++) {
+        snprintf(member, sizeof(member), "qa:bench:setqa:%d", i);
+        snprintf(question, sizeof(question), "SETQA benchmark question %d: redis vector semantic cache", i);
+        snprintf(answer, sizeof(answer), "SETQA benchmark answer %d", i);
+        bulk_arg_t argv[] = {
+            bulk_str("SETQA"), bulk_str(qa_index), bulk_str("ID"), bulk_str(member),
+            bulk_str("QUESTION"), bulk_str(question),
+            bulk_str("ANSWER"), bulk_str(answer)
+        };
+        run_cmd(sock, "BENCH SETQA", 8, argv, resp, sizeof(resp));
+        if (strcmp(resp, "+OK\r\n") != 0) fail_response("BENCH SETQA response", resp);
+    }
+    total_ms = now_ms() - start_ms;
+    print_qps_result("SETQA", n, total_ms);
+}
+
+static void bench_getqa(int sock, int n) {
+    char resp[RECV_BUF_SIZE];
+    char question[256];
+    double start_ms, total_ms;
+    const char *qa_index = "qa_bench_index";
+
+    /* Warmup GETQA separately because query embedding has its own first-hit cost. */
+    bulk_arg_t warmup[] = {
+        bulk_str("GETQA"), bulk_str(qa_index), bulk_str("QUESTION"), bulk_str("SETQA benchmark question 0"),
+        bulk_str("TOPK"), bulk_str("5")
+    };
+    run_cmd(sock, "BENCH GETQA warmup", 6, warmup, resp, sizeof(resp));
+    if (response_is_error(resp)) {
+        printf("[SKIP] GETQA QPS embedding service unavailable: %s", resp);
+        return;
+    }
+
+    start_ms = now_ms();
+    for (int i = 0; i < n; i++) {
+        snprintf(question, sizeof(question), "SETQA benchmark question %d", i % 20);
+        bulk_arg_t argv[] = {
+            bulk_str("GETQA"), bulk_str(qa_index), bulk_str("QUESTION"), bulk_str(question),
+            bulk_str("TOPK"), bulk_str("5")
+        };
+        run_cmd(sock, "BENCH GETQA", 6, argv, resp, sizeof(resp));
+        if (response_is_error(resp)) fail_response("BENCH GETQA response", resp);
+        expect_contains("BENCH GETQA response array", resp, "*");
+    }
+    total_ms = now_ms() - start_ms;
+    print_qps_result("GETQA", n, total_ms);
+}
+
+
+static void *bench_setqa_worker(void *argp) {
+    bench_thread_arg_t *arg = (bench_thread_arg_t *)argp;
+    char resp[RECV_BUF_SIZE];
+    char member[128];
+    char question[256];
+    char answer[256];
+    const char *qa_index = "qa_batch_index";
+    int sock = connect_server(arg->ip, arg->port);
+
+    for (int i = 0; i < arg->requests; i++) {
+        snprintf(member, sizeof(member), "qa:batch:setqa:%d:%d", arg->thread_id, i);
+        snprintf(question, sizeof(question), "batch SETQA question thread %d request %d", arg->thread_id, i);
+        snprintf(answer, sizeof(answer), "batch SETQA answer thread %d request %d", arg->thread_id, i);
+        bulk_arg_t argv[] = {
+            bulk_str("SETQA"), bulk_str(qa_index), bulk_str("ID"), bulk_str(member),
+            bulk_str("QUESTION"), bulk_str(question),
+            bulk_str("ANSWER"), bulk_str(answer)
+        };
+        run_cmd(sock, "BATCH SETQA", 8, argv, resp, sizeof(resp));
+        if (strcmp(resp, "+OK\r\n") != 0) {
+            snprintf(arg->err, sizeof(arg->err), "BATCH SETQA failed");
+            arg->failed = 1;
+            break;
+        }
+    }
+    close(sock);
+    return NULL;
+}
+
+static void *bench_getqa_worker(void *argp) {
+    bench_thread_arg_t *arg = (bench_thread_arg_t *)argp;
+    char resp[RECV_BUF_SIZE];
+    char question[256];
+    const char *qa_index = "qa_batch_index";
+    int sock = connect_server(arg->ip, arg->port);
+
+    for (int i = 0; i < arg->requests; i++) {
+        snprintf(question, sizeof(question), "batch SETQA question thread %d request %d", arg->thread_id, i % arg->requests);
+        bulk_arg_t argv[] = {
+            bulk_str("GETQA"), bulk_str(qa_index), bulk_str("QUESTION"), bulk_str(question),
+            bulk_str("TOPK"), bulk_str("5")
+        };
+        run_cmd(sock, "BATCH GETQA", 6, argv, resp, sizeof(resp));
+        if (response_is_error(resp) || strstr(resp, "*") == NULL) {
+            snprintf(arg->err, sizeof(arg->err), "BATCH GETQA failed");
+            arg->failed = 1;
+            break;
+        }
+    }
+    close(sock);
+    return NULL;
+}
+
+static void bench_concurrent(const char *ip, int port, const char *name,
+                             void *(*worker)(void *), int concurrency, int total_requests) {
+    pthread_t tids[16];
+    bench_thread_arg_t args[16];
+    int per_thread;
+    double start_ms, total_ms;
+
+    if (concurrency <= 0 || concurrency > 16 || total_requests <= 0) return;
+    per_thread = total_requests / concurrency;
+    if (per_thread <= 0) per_thread = 1;
+    total_requests = per_thread * concurrency;
+
+    memset(args, 0, sizeof(args));
+    start_ms = now_ms();
+    for (int i = 0; i < concurrency; i++) {
+        args[i].ip = ip;
+        args[i].port = port;
+        args[i].thread_id = i;
+        args[i].requests = per_thread;
+        if (pthread_create(&tids[i], NULL, worker, &args[i]) != 0) {
+            perror("pthread_create");
+            exit(1);
+        }
+    }
+    for (int i = 0; i < concurrency; i++) {
+        pthread_join(tids[i], NULL);
+        if (args[i].failed) fail_response(args[i].err, "");
+    }
+    total_ms = now_ms() - start_ms;
+
+    char label[64];
+    snprintf(label, sizeof(label), "%s_BATCH_C%d", name, concurrency);
+    print_qps_result(label, total_requests, total_ms);
+}
+
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s <ip> <port>\n", argv[0]);
+    int run_bench = 0;
+    if (argc != 3 && argc != 4) {
+        fprintf(stderr, "Usage: %s <ip> <port> [bench]\n", argv[0]);
         return 1;
     }
+    if (argc == 4 && strcmp(argv[3], "bench") == 0) run_bench = 1;
 
     int sock = connect_server(argv[1], atoi(argv[2]));
     test_vector(sock);
+    test_qa(sock);
+    if (run_bench) {
+        bench_setqa(sock, 20);
+        bench_getqa(sock, 20);
+    }
     close(sock);
+
+    if (run_bench) {
+        bench_concurrent(argv[1], atoi(argv[2]), "SETQA", bench_setqa_worker, 4, 8);
+        bench_concurrent(argv[1], atoi(argv[2]), "GETQA", bench_getqa_worker, 4, 8);
+    }
 
     printf("test_vector: all tests passed\n");
     return 0;

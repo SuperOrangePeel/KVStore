@@ -808,17 +808,14 @@ kvs_status_t _kvs_slave_cmd_logic(struct kvs_server_s *server, struct kvs_handle
     //if(cmd->cmd_type == KVS_CMD_READ)
     //LOG_DEBUG("Received replication command from master: %.*s", (int)cmd->len_cmd, cmd->cmd);
     if(server->slave != NULL && server->slave->slave_mode == 1) {
-        if(cmd->cmd_idx != KVS_CMD_SET && cmd->cmd_idx != KVS_CMD_DEL && cmd->cmd_idx != KVS_CMD_MOD) {
+        if(cmd->cmd_idx != KVS_CMD_SET && cmd->cmd_idx != KVS_CMD_DEL && cmd->cmd_idx != KVS_CMD_MOD &&
+           cmd->cmd_idx != KVS_CMD_SETQA_APPLY && cmd->cmd_idx != KVS_CMD_DELV && cmd->cmd_idx != KVS_CMD_DELQA) {
             return KVS_OK;
         }
     }
 
     // process command. Replication input never sends per-command responses.
     kvs_result_t result = kvs_executor_cmd(server, cmd, conn);
-
-    if(cmd->cmd_idx == KVS_CMD_SETV) {
-        printf("result: %d\n", result);
-    }
 
     (void)result;
 

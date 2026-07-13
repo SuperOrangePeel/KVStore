@@ -6,7 +6,7 @@ bind_ip = "172.16.135.130"
 port = 2004
 # repl_backlog_size = 1048576
 # io_uring_entries = 1024
-io_uring_mode = "normal" # normal or sqpoll
+io_uring_mode = "sqpoll" # normal or sqpoll
 io_uring_sq_thread_idle = 2000 # milliseconds, only used by sqpoll
 
 # max_tcp_connections = 1024
@@ -14,29 +14,47 @@ io_uring_sq_thread_idle = 2000 # milliseconds, only used by sqpoll
 # tcp_send_buf_size = 1048576
 
 # debug, info, warn, error
-log_level = "debug" 
-# log_level = "info"
+# log_level = "debug" 
+log_level = "info"
 
 
 [persistence]
 aof_enabled = false
 aof_path = "kvstore.aof"
 rdb_path = "dump.rdb"
-# 0: no, 1: always, 2: everysec
-aof_fsync_policy = 1
+# 0: no, 1: everysec
+aof_fsync_policy = 0
+# 0: async_iouring, 1: sync_buffered
+aof_write_mode = 0
+# 多少次写操作后触发一次 RDB 快照，默认 100000 次
+rdb_policy = -1
 
 [replication]
-# 0: use normal SYNC with master, 1: connect to eBPF forwarder and accept write-only forwarded commands
-slave_mode = 0
+# 如果是 Slave，取消注释下面两行
 master_ip = "172.16.135.130"
+master_port = 2000
 
-# 3000
-master_port = 2000 
+# 0: normal SYNC, 1: eBPF forwarder write-only mode
+# slave_mode = 0 
 
 # 如果是 Master，取消注释下面一行
-max_slave_count = 512
+# max_slave_count = 512
 
 
 [rdma]
 rdma_port = 2001
 rdma_max_chunk_size = 62914560
+
+[embedding]
+enabled = true
+server_path = "./embedding_server.py"
+socket_path = "/tmp/kvstore_embedding.sock"
+model = "Qwen/Qwen3-Embedding-0.6B"
+dim = 512
+worker_threads = 2
+timeout_ms = 3000
+
+[qa]
+auto_member_prefix = "qa:"
+auto_member_start = 1000000
+auto_member_counter_key = "__qa_auto_id__"

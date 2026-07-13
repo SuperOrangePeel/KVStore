@@ -19,7 +19,7 @@ log_level = "info"
 
 
 [persistence]
-aof_enabled = false
+aof_enabled = true
 aof_path = "kvstore.aof"
 rdb_path = "dump.rdb"
 # 0: no, 1: everysec
@@ -44,3 +44,17 @@ max_slave_count = 512
 [rdma]
 rdma_port = 2001
 rdma_max_chunk_size = 62914560
+
+[embedding]
+enabled = true
+server_path = "./embedding_server.py"
+socket_path = "/tmp/kvstore_embedding.sock"
+model = "Qwen/Qwen3-Embedding-0.6B"
+dim = 512
+worker_threads = 2
+timeout_ms = 3000
+
+[qa]
+auto_member_prefix = "qa:"
+auto_member_start = 1000000
+auto_member_counter_key = "__qa_auto_id__"

@@ -116,7 +116,39 @@ int kvs_config_load(kvs_config_t *conf, const char *filename) {
         conf->slave_mode = 0;
     }
 
-    // 6. 读取 Section: [rdma]
+    // 6. 读取 Section: [embedding]
+    toml_table_t *embedding = toml_table_in(root, "embedding");
+    if (embedding) {
+        CONF_GET_BOOL(embedding, "enabled", conf->embedding_enabled, 0);
+        CONF_GET_STR(embedding, "server_path", conf->embedding_server_path, "./embedding_server.py");
+        CONF_GET_STR(embedding, "socket_path", conf->embedding_socket_path, "/tmp/kvstore_embedding.sock");
+        CONF_GET_STR(embedding, "model", conf->embedding_model, "Qwen/Qwen3-Embedding-0.6B");
+        CONF_GET_INT(embedding, "dim", conf->embedding_dim, 512);
+        CONF_GET_INT(embedding, "worker_threads", conf->embedding_worker_threads, 2);
+        CONF_GET_INT(embedding, "timeout_ms", conf->embedding_timeout_ms, 3000);
+    } else {
+        conf->embedding_enabled = 0;
+        strcpy(conf->embedding_server_path, "./embedding_server.py");
+        strcpy(conf->embedding_socket_path, "/tmp/kvstore_embedding.sock");
+        strcpy(conf->embedding_model, "Qwen/Qwen3-Embedding-0.6B");
+        conf->embedding_dim = 512;
+        conf->embedding_worker_threads = 2;
+        conf->embedding_timeout_ms = 3000;
+    }
+
+    // 7. 读取 Section: [qa]
+    toml_table_t *qa = toml_table_in(root, "qa");
+    if (qa) {
+        CONF_GET_STR(qa, "auto_member_prefix", conf->qa_auto_member_prefix, "qa:");
+        CONF_GET_INT(qa, "auto_member_start", conf->qa_auto_member_start, 1000000);
+        CONF_GET_STR(qa, "auto_member_counter_key", conf->qa_auto_member_counter_key, "__qa_auto_id__");
+    } else {
+        strcpy(conf->qa_auto_member_prefix, "qa:");
+        conf->qa_auto_member_start = 1000000;
+        strcpy(conf->qa_auto_member_counter_key, "__qa_auto_id__");
+    }
+
+    // 8. 读取 Section: [rdma]
     toml_table_t *rdma = toml_table_in(root, "rdma");
     if (rdma) {
         CONF_GET_INT(rdma, "rdma_port", conf->rdma_port, 2001);
@@ -143,5 +175,7 @@ void kvs_config_dump(kvs_config_t *conf) {
         printf("Slave Mode: %d\n", conf->slave_mode);
     }
     printf("AOF: %s (Path: %s)\n", conf->aof_enabled ? "Yes" : "No", conf->aof_path);
+    printf("Embedding: %s model=%s dim=%d socket=%s\n", conf->embedding_enabled ? "Yes" : "No",
+           conf->embedding_model, conf->embedding_dim, conf->embedding_socket_path);
     printf("============================\n");
 }

@@ -14,6 +14,7 @@
 #include "kvs_types.h"
 #include "kvs_persistence.h"
 #include "kvs_vector.h"
+#include "kvs_config.h"
 
 #define ENABLE_ARRAY 1
 #define ENABLE_RBTREE 1
@@ -38,6 +39,9 @@ struct _rbtree;
 struct kvs_pers_context_s;
 struct kvs_expire_table_s;
 struct kvs_vector_store;
+struct kvs_embedding_manager;
+struct kvs_qa_manager;
+struct qa_task;
 struct io_uring;
 struct ibv_mr;
 
@@ -64,6 +68,16 @@ struct kvs_server_config_s {
 
     int use_rdma;
     size_t rdma_max_chunk_size;
+    int embedding_enabled;
+    char embedding_server_path[256];
+    char embedding_socket_path[256];
+    char embedding_model[256];
+    int embedding_dim;
+    int embedding_worker_threads;
+    int embedding_timeout_ms;
+    char qa_auto_member_prefix[64];
+    uint64_t qa_auto_member_start;
+    char qa_auto_member_counter_key[128];
     //int io_uring_entries;
 };
 
@@ -256,9 +270,13 @@ struct kvs_my_master_context_s {
 };
 
 
+#define KVS_CLIENT_BLOCKED_EMBEDDING (1 << 0)
+
 struct kvs_client_context_s {
     struct kvs_ctx_header_s header;
     kvs_client_state_t state;
+    int flags;
+    struct qa_task *blocked_task;
 };
 
 struct kvs_slave_s {
@@ -323,6 +341,8 @@ struct kvs_server_s {
     struct _rbtree *rbtree;
     struct kvs_expire_table_s *expires;
     struct kvs_vector_store *vector_store;
+    struct kvs_embedding_manager *embedding;
+    struct kvs_qa_manager *qa;
 
     struct kvs_master_s* master;
     struct kvs_slave_s* slave;
@@ -402,6 +422,11 @@ kvs_result_t kvs_server_delv(struct kvs_server_s *server, char *collection_name,
         char *member, int len_member);
 kvs_result_t kvs_server_vinfo(struct kvs_server_s *server, char *collection_name, int len_collection_name,
         kvs_vector_info_t *info);
+kvs_result_t kvs_server_setqa_apply(struct kvs_server_s *server, char *index, int len_index,
+        char *member, int len_member, char *question, int len_question,
+        char *answer, int len_answer, const void *vector, int len_vector);
+int kvs_server_write_and_replicate_raw(struct kvs_server_s *server, char *raw, int raw_len);
+int kvs_server_after_write(struct kvs_server_s *server);
 
 
 
@@ -460,6 +485,7 @@ kvs_status_t kvs_master_remove_slave(struct kvs_master_s *master, struct kvs_con
 kvs_status_t kvs_client_on_recv(struct kvs_conn_s *conn, int *read_size);
 kvs_status_t kvs_client_on_send(struct kvs_conn_s *conn, int bytes_sent);
 void kvs_client_on_close(struct kvs_conn_s *conn);
+kvs_status_t kvs_client_process_buffer(struct kvs_conn_s *conn);
 
 kvs_status_t kvs_my_slave_on_recv(struct kvs_conn_s *conn, int *read_size);
 kvs_status_t kvs_my_slave_on_send(struct kvs_conn_s *conn, int bytes_sent);

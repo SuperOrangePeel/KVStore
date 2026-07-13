@@ -50,6 +50,20 @@ typedef struct {
     int rdma_port;
     int rdma_max_chunk_size;
 
+    // --- Embedding service ---
+    int embedding_enabled;
+    char embedding_server_path[256];
+    char embedding_socket_path[256];
+    char embedding_model[256];
+    int embedding_dim;
+    int embedding_worker_threads;
+    int embedding_timeout_ms;
+
+    // --- QA semantic cache ---
+    char qa_auto_member_prefix[64];
+    uint64_t qa_auto_member_start;
+    char qa_auto_member_counter_key[128];
+
 } kvs_config_t;
 
 // 初始化并加载配置

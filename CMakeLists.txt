@@ -71,6 +71,7 @@ set(KVSTORE_SOURCES
     src/server/kvs_server.c
     src/server/kvs_server_client.c
     src/server/kvs_server_db.c
+    src/server/kvs_qa.c
     src/server/kvs_server_handler.c
     src/server/kvs_server_master.c
     src/server/kvs_server_rdb.c
@@ -166,8 +167,11 @@ add_custom_command(TARGET kvstore POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/src/kvs.toml
         $<TARGET_FILE_DIR:kvstore>/kvs.toml
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/embedding_server.py
+        $<TARGET_FILE_DIR:kvstore>/embedding_server.py
 
-    COMMENT "Copying kvs.toml to output directory"
+    COMMENT "Copying runtime config and embedding server to output directory"
 
 )
 

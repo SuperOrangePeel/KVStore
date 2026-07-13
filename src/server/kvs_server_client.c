@@ -6,6 +6,7 @@
 #include "kvs_executor.h"
 #include "kvs_resp_protocol.h"
 #include "kvs_response.h"
+#include "kvs_qa.h"
 
 #include <assert.h>
 #include <string.h>
@@ -124,6 +125,36 @@ kvs_status_t kvs_client_state_machine_tick(struct kvs_server_s *server, struct k
 
 
 
+
+int kvs_server_after_write(struct kvs_server_s *server) {
+    if(server == NULL) return -1;
+    if(server->pers_ctx->rdb_policy > 0) server->write_command_count++;
+    if(server->pers_ctx->rdb_policy > 0 && server->write_command_count >= server->pers_ctx->rdb_policy && server->rdb_child_pid <= 0) {
+        if(server->rdb_child_pid <= 0) {
+            kvs_server_save_rdb_fork(server);
+            server->write_command_count = 0;
+        }
+    }
+    return 0;
+}
+
+int kvs_server_write_and_replicate_raw(struct kvs_server_s *server, char *raw, int raw_len) {
+    struct kvs_handler_cmd_s tmp;
+    if(server == NULL || raw == NULL || raw_len <= 0) return -1;
+    if(server->pers_ctx->aof_enabled && kvs_persistence_write_aof(server->pers_ctx, raw, raw_len) < 0) {
+        LOG_ERROR("append materialized AOF failed");
+        return -1;
+    }
+    memset(&tmp, 0, sizeof(tmp));
+    tmp.cmd_type = KVS_CMD_WRITE;
+    tmp.raw_ptr = raw;
+    tmp.raw_len = raw_len;
+    if(server->role == KVS_SERVER_ROLE_MASTER && server->master != NULL && server->master->slave_count > 0) {
+        kvs_master_propagate_command_to_slaves(server->master, &tmp);
+    }
+    return kvs_server_after_write(server);
+}
+
 static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_handler_cmd_s *cmd, struct kvs_conn_s *conn) {
     struct kvs_client_context_s* ctx_header = (struct kvs_client_context_s*)conn->header.user_data;
     if(ctx_header == NULL || ctx_header->header.type != KVS_CTX_NORMAL_CLIENT) {
@@ -155,22 +186,8 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
             return KVS_ERR;
         }
 
-        if(server->pers_ctx->rdb_policy > 0) server->write_command_count++;
-        if(server->pers_ctx->aof_enabled &&
-           kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len) < 0) {
-            LOG_ERROR("append AOF failed after command execution");
+        if(kvs_server_write_and_replicate_raw(server, cmd->raw_ptr, cmd->raw_len) != 0) {
             return KVS_ERR;
-        }
-
-        if(server->role == KVS_SERVER_ROLE_MASTER && server->master->slave_count > 0)
-            kvs_master_propagate_command_to_slaves(server->master, cmd);
-
-        if(server->pers_ctx->rdb_policy > 0 && server->write_command_count >= server->pers_ctx->rdb_policy && server->rdb_child_pid <= 0) {
-            if(server->rdb_child_pid > 0) {
-                return KVS_OK;
-            }
-            kvs_server_save_rdb_fork(server);
-            server->write_command_count = 0;
         }
 
         return append_simple_reply(conn, "+OK\r\n", sizeof("+OK\r\n") - 1);
@@ -198,6 +215,9 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
 
     kvs_result_t result = kvs_executor_cmd(server, cmd, conn);
 
+    if(result == KVS_RES_BLOCKED) {
+        return KVS_STATUS_CONTINUE;
+    }
     if(result == KVS_RES_SKIP_RESPONSE || result == KVS_RES_RDB_SKIP_RESPONSE){
 		return KVS_OK;
     }
@@ -210,35 +230,16 @@ static kvs_status_t _client_cmd_logic(struct kvs_server_s *server, struct kvs_ha
     // }
 
     if((cmd->cmd_type & KVS_CMD_WRITE) && result == KVS_RES_OK) {
-        
-        if( server->pers_ctx->rdb_policy > 0) server->write_command_count ++ ;
-        //if(server->pers_ctx->aof_enabled) {
-            // append to AOF file
-        if(kvs_persistence_write_aof(server->pers_ctx, cmd->raw_ptr, cmd->raw_len) < 0) {
-            LOG_ERROR("append AOF failed after command execution");
-            return KVS_ERR; // 前面保证了这里应该不会失败，如果失败了说明有严重问题，直接返回错误让服务器处理
+        if(kvs_server_write_and_replicate_raw(server, cmd->raw_ptr, cmd->raw_len) != 0) {
+            return KVS_ERR;
         }
-        //}
-        kvs_master_propagate_command_to_slaves(server->master, cmd);
     }
-    if(server->pers_ctx->rdb_policy > 0 && server->write_command_count >= server->pers_ctx->rdb_policy && server->rdb_child_pid <= 0) {
-        // trigger RDB save
-        LOG_DEBUG("write_command_count %d reached rdb_policy %d, trigger RDB save", server->write_command_count, server->pers_ctx->rdb_policy);
-        //kvs_server_trigger_bgsave(server);
-        if(server->rdb_child_pid > 0) {
-            LOG_DEBUG("RDB save already in progress, skip this trigger");
-            return KVS_OK;
-        }
-        kvs_server_save_rdb_fork(server);
-        server->write_command_count = 0; // reset counter
-    }
-
     kvs_format_response(result, cmd->val, cmd->len_val, conn);
 
     return KVS_OK;
 }
 
-kvs_status_t kvs_client_on_recv(struct kvs_conn_s *conn, int *read_size) {
+kvs_status_t kvs_client_process_buffer(struct kvs_conn_s *conn) {
     int parsed_len = 0;
     int parsed_total_len = 0;
     struct kvs_server_s *server = (struct kvs_server_s *)conn->server_ctx;
@@ -262,7 +263,9 @@ kvs_status_t kvs_client_on_recv(struct kvs_conn_s *conn, int *read_size) {
 
         parsed_total_len += parsed_len;
         kvs_status_t result = _client_cmd_logic(server, &cmd, conn);
-        if(result == KVS_BREAK) {
+        if(result == KVS_STATUS_CONTINUE) {
+            break;
+        } else if(result == KVS_BREAK) {
             parsed_total_len = conn->r_idx;
             break;
         } else if(result == KVS_AGAIN) {
@@ -279,19 +282,37 @@ kvs_status_t kvs_client_on_recv(struct kvs_conn_s *conn, int *read_size) {
         }
     }
 
-    *read_size = parsed_total_len;
+    if(parsed_total_len > 0) {
+        int remain = conn->r_idx - parsed_total_len;
+        if(remain > 0) memmove(conn->r_buffer, conn->r_buffer + parsed_total_len, (size_t)remain);
+        conn->r_idx = remain;
+    }
     if(conn->s_idx > 0) {
         kvs_net_set_send_event_manual(conn);
     }
     return KVS_OK;
 }
 
+kvs_status_t kvs_client_on_recv(struct kvs_conn_s *conn, int *read_size) {
+    kvs_status_t ret;
+    if(conn == NULL || read_size == NULL) return KVS_ERR;
+    ret = kvs_client_process_buffer(conn);
+    /* kvs_client_process_buffer already compacts conn->r_buffer. */
+    *read_size = 0;
+    return ret;
+}
+
 kvs_status_t kvs_client_on_send(struct kvs_conn_s *conn, int bytes_sent) {
-    kvs_net_set_recv_event(conn);
+    struct kvs_client_context_s *ctx = conn ? (struct kvs_client_context_s *)conn->header.user_data : NULL;
+    (void)bytes_sent;
+    if(ctx == NULL || ctx->header.type != KVS_CTX_NORMAL_CLIENT || !(ctx->flags & KVS_CLIENT_BLOCKED_EMBEDDING)) {
+        kvs_net_set_recv_event(conn);
+    }
     return KVS_OK;
 }
 
 void kvs_client_on_close(struct kvs_conn_s *conn) {
+    kvs_qa_detach_client(conn);
     LOG_DEBUG("normal client disconnected, fd: %d\n", conn->_internal.fd);
     return; // client close do nothing
 }

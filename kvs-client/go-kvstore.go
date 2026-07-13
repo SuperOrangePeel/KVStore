@@ -199,6 +199,68 @@ func (c *KVSClient) VectorInfo(collection string) (VectorInfo, error) {
 	return parseVectorInfo(fields)
 }
 
+// SetQAID 执行 SETQA index ID member QUESTION question ANSWER answer。
+//
+// 适合业务方已有稳定 ID 的场景。服务端 Master 会请求 embedding，完成后写入 answer、question 和 vector，
+// 并把确定性的 SETQA.APPLY 写入 AOF/复制给 Slave。
+func (c *KVSClient) SetQAID(index, member, question, answer string) error {
+	if index == "" || member == "" || question == "" || answer == "" {
+		return errors.New("index/member/question/answer must not be empty")
+	}
+	_, err := c.do("SETQA", index, "ID", member, "QUESTION", question, "ANSWER", answer)
+	return err
+}
+
+// SetQAAuto 执行 SETQA index AUTO QUESTION question ANSWER answer。
+//
+// member 由 Master 生成并返回，例如 qa:1000001。Slave 不会自行生成 member。
+func (c *KVSClient) SetQAAuto(index, question, answer string) (string, error) {
+	if index == "" || question == "" || answer == "" {
+		return "", errors.New("index/question/answer must not be empty")
+	}
+	resp, err := c.do("SETQA", index, "AUTO", "QUESTION", question, "ANSWER", answer)
+	if err != nil {
+		return "", err
+	}
+	member, ok := resp.(string)
+	if !ok {
+		return "", fmt.Errorf("unexpected SETQA AUTO response: %T", resp)
+	}
+	return member, nil
+}
+
+// GetQA 执行 GETQA index QUESTION question TOPK topK。
+//
+// 返回结果格式与 GETV WITHVALUES 一致：member、score、answer。
+func (c *KVSClient) GetQA(index, question string, topK int) ([]SearchResult, error) {
+	if index == "" || question == "" {
+		return nil, errors.New("index/question must not be empty")
+	}
+	if topK <= 0 {
+		return nil, errors.New("topK must be positive")
+	}
+	resp, err := c.do("GETQA", index, "QUESTION", question, "TOPK", strconv.Itoa(topK))
+	if err != nil {
+		return nil, err
+	}
+	arr, ok := resp.([]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected GETQA response: %T", resp)
+	}
+	return parseSearchResults(arr, true)
+}
+
+// DelQA 执行 DELQA index member。
+//
+// 服务端会删除 vector，并删除主 hash 中的 member -> answer 和 member:q -> question。
+func (c *KVSClient) DelQA(index, member string) error {
+	if index == "" || member == "" {
+		return errors.New("index/member must not be empty")
+	}
+	_, err := c.do("DELQA", index, member)
+	return err
+}
+
 func (c *KVSClient) searchVector(collection string, query []float32, topK int, withValues bool) ([]SearchResult, error) {
 	if len(query) == 0 {
 		return nil, errors.New("query vector must not be empty")
@@ -543,4 +605,22 @@ func main() {
 	fmt.Printf("VINFO => %+v\n", info)
 
 	must("DELV qa:1001", client.DeleteVector(collection, "qa:1001"))
+
+	// QA 语义缓存接口样例。要求服务端 [embedding].enabled=true，并且 embedding_server 已能加载模型。
+	// 如果服务端用 KVS_EMBEDDING_MOCK=1 启动，也可以用 mock embedding 验证接口流程。
+	qaIndex := fmt.Sprintf("qa_go_demo_%d", time.Now().UnixNano())
+	member, err := client.SetQAAuto(qaIndex, "1美元多少美分", "1美元等于100美分")
+	if err != nil {
+		fmt.Printf("SETQA AUTO skipped/failed: %v\n", err)
+	} else {
+		fmt.Printf("SETQA AUTO => %s\n", member)
+
+		must("SETQA ID", client.SetQAID(qaIndex, "qa:biz1001", "redis setex 是什么", "SETEX 用于设置带过期时间的 key。"))
+
+		qaResults, err := client.GetQA(qaIndex, "one dollar how many cents", 2)
+		must("GETQA", err)
+		fmt.Printf("GETQA => %+v\n", qaResults)
+
+		must("DELQA", client.DelQA(qaIndex, member))
+	}
 }

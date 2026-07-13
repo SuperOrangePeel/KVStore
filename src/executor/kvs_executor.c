@@ -5,6 +5,7 @@
 #include "logger.h"
 #include "kvs_server.h"
 #include "kvs_network.h"
+#include "kvs_qa.h"
 
 #include <stddef.h>
 #include <assert.h>
@@ -192,6 +193,14 @@ kvs_result_t kvs_executor_cmd(struct kvs_server_s *server, struct kvs_handler_cm
     if(cmd == NULL) return KVS_RES_ERR;
 
     switch(cmd->cmd_idx) {
+        case KVS_CMD_SETQA:
+            return kvs_qa_submit_setqa(server, cmd, conn);
+        case KVS_CMD_GETQA:
+            return kvs_qa_submit_getqa(server, cmd, conn);
+        case KVS_CMD_DELQA:
+            return kvs_qa_exec_delqa(server, cmd);
+        case KVS_CMD_SETQA_APPLY:
+            return kvs_qa_exec_apply(server, cmd);
         case KVS_CMD_CREATEV:
             return _kvs_exec_createv(server, cmd, conn);
         case KVS_CMD_SETV:

@@ -35,6 +35,10 @@ static const int command_type[] = {
 	[KVS_CMD_GETV] = KVS_CMD_READ,
 	[KVS_CMD_DELV] = KVS_CMD_WRITE,
 	[KVS_CMD_VINFO] = KVS_CMD_READ,
+	[KVS_CMD_SETQA] = KVS_CMD_WRITE,
+	[KVS_CMD_GETQA] = KVS_CMD_READ,
+	[KVS_CMD_DELQA] = KVS_CMD_WRITE,
+	[KVS_CMD_SETQA_APPLY] = KVS_CMD_WRITE,
 	//save
 	[KVS_CMD_SAVE] = KVS_CMD_OTHER,
 	//slave sync
@@ -81,7 +85,10 @@ static inline int lookup_command(char *cmd, int len, kvs_command_type_t *type) {
 			break;
 		}
 		case 5:
-			if(cmd_upper(cmd[0]) == 86 && cmd_upper(cmd[1]) == 73 && cmd_upper(cmd[2]) == 78 && cmd_upper(cmd[3]) == 70 && cmd_upper(cmd[4]) == 79) idx = KVS_CMD_VINFO;
+			if(cmd_upper(cmd[0]) == 83 && cmd_upper(cmd[1]) == 69 && cmd_upper(cmd[2]) == 84 && cmd_upper(cmd[3]) == 81 && cmd_upper(cmd[4]) == 65) idx = KVS_CMD_SETQA;
+			else if(cmd_upper(cmd[0]) == 71 && cmd_upper(cmd[1]) == 69 && cmd_upper(cmd[2]) == 84 && cmd_upper(cmd[3]) == 81 && cmd_upper(cmd[4]) == 65) idx = KVS_CMD_GETQA;
+			else if(cmd_upper(cmd[0]) == 68 && cmd_upper(cmd[1]) == 69 && cmd_upper(cmd[2]) == 76 && cmd_upper(cmd[3]) == 81 && cmd_upper(cmd[4]) == 65) idx = KVS_CMD_DELQA;
+			else if(cmd_upper(cmd[0]) == 86 && cmd_upper(cmd[1]) == 73 && cmd_upper(cmd[2]) == 78 && cmd_upper(cmd[3]) == 70 && cmd_upper(cmd[4]) == 79) idx = KVS_CMD_VINFO;
 			else if(cmd_upper(cmd[0]) == 69 && cmd_upper(cmd[1]) == 88 && cmd_upper(cmd[2]) == 73 && cmd_upper(cmd[3]) == 83 && cmd_upper(cmd[4]) == 84) idx = KVS_CMD_EXIST;
 			else if(cmd_upper(cmd[0]) == 83 && cmd_upper(cmd[1]) == 69 && cmd_upper(cmd[2]) == 84 && cmd_upper(cmd[3]) == 69 && cmd_upper(cmd[4]) == 88) idx = KVS_CMD_SETEX;
 			break;
@@ -95,6 +102,10 @@ static inline int lookup_command(char *cmd, int len, kvs_command_type_t *type) {
 		}
 		case 9:
 			if(cmd_upper(cmd[0]) == 83 && cmd_upper(cmd[1]) == 89 && cmd_upper(cmd[2]) == 78 && cmd_upper(cmd[3]) == 67 && cmd[4] == 95 && cmd_upper(cmd[5]) == 82 && cmd_upper(cmd[6]) == 68 && cmd_upper(cmd[7]) == 77 && cmd_upper(cmd[8]) == 65) idx = KVS_CMD_SLAVE_SYNC_RDMA;
+			break;
+		case 11:
+			if(cmd_upper(cmd[0]) == 83 && cmd_upper(cmd[1]) == 69 && cmd_upper(cmd[2]) == 84 && cmd_upper(cmd[3]) == 81 && cmd_upper(cmd[4]) == 65 && cmd[5] == '.' &&
+			   cmd_upper(cmd[6]) == 65 && cmd_upper(cmd[7]) == 80 && cmd_upper(cmd[8]) == 80 && cmd_upper(cmd[9]) == 76 && cmd_upper(cmd[10]) == 89) idx = KVS_CMD_SETQA_APPLY;
 			break;
 	}
 
